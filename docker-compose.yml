@@ -1,0 +1,10 @@
+services:
+  web:
+    image: nginx:1.27
+    volumes:
+      - ./templates:/etc/nginx/templates:ro
+    ports:
+      - "9090:80"
+    environment:
+      - NGINX_HOST=big-data-chart.local
+      - NGINX_PORT=80
