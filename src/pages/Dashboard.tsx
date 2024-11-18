@@ -1,6 +1,5 @@
 import {
   Box,
-  LinearProgress,
   Slider,
   Typography,
 } from "@mui/material";
@@ -21,8 +20,9 @@ const Dashboard = () => {
   const [table, setTable] = useState<string>("intel_lab_exp")
   const [accuracy, setAccuracy] = useState<number>(0.95)
   const [data, setData] = useState<any>(null)
-  const [points, setPoints] = useState([])
+  const [points, setPoints] = useState<{x: number, y: number}[]>([])
   const [requested, setRequested] = useState<[number, number][]>([[from, to]])
+  const [callCount, setCallCount] = useState<number>(1);
 
   const ref = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -31,7 +31,7 @@ const Dashboard = () => {
     if (!height || !width) {
       return;
     }
-
+    setCallCount(callCount+1)
     setRequested([...requested, [from, to]])
 
     if (abortControllerRef.current) {
@@ -132,7 +132,6 @@ const Dashboard = () => {
       </Box>
 
       <Box display={"flex"} alignItems={"center"} flexDirection={'column'}>
-        {loading && <LinearProgress />}
         <Chart
           title={"test"}
           series={[points]}
