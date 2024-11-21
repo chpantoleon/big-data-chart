@@ -1,19 +1,45 @@
 import {AxiosResponse } from 'axios';
 
 import apiClient from './client';
+import {MetadataDto} from "../interfaces/metadata";
+import {QueryResultsDto, ResponseDto} from "../interfaces/data";
+import {QueryDto} from "../interfaces/query";
 
 const prefix = '/data'
 
 interface DataServices {
-  getData(datasource: string, postData: any, signal: AbortSignal): Promise<AxiosResponse<any>>
+  getData(datasource: string, postData: QueryDto, signal: AbortSignal): Promise<QueryResultsDto>
+  getMetadata(
+    datasource: string,
+    schema: string,
+    table: string,
+  ): Promise<AxiosResponse<MetadataDto>>
 }
 
 const endpoints = {
   getData: (datasource: string) => `${prefix}/${datasource}/query`,
+  getMetadata: (
+    datasource: string,
+    schema: string,
+    table: string
+  ) => `${prefix}/${datasource}/dataset/${schema}/${table}`,
 }
 
 export const services: DataServices = {
-  getData: async (datasource: string, postData: any, signal: AbortSignal): Promise<AxiosResponse<any>> => {
-    return apiClient.post(endpoints.getData(datasource), postData, { signal });
+  getData: async (
+    datasource: string,
+    postData: QueryDto,
+    signal: AbortSignal
+  ): Promise<QueryResultsDto> => {
+    const response: AxiosResponse<ResponseDto> = await apiClient.post(endpoints.getData(datasource), postData, { signal });
+
+    return response.data.queryResults;
   },
+  getMetadata: async (
+    datasource: string,
+    schema: string,
+    table: string,
+  ): Promise<AxiosResponse<MetadataDto>> => {
+    return apiClient.get(endpoints.getMetadata(datasource, schema, table))
+  }
 }
