@@ -5,7 +5,7 @@ import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 
 const ProtectedRoute = () => {
   return (
-    <Box sx={{p:1}}>
+    <Box>
       <LocalizationProvider dateAdapter={AdapterDayjs}>
         <Outlet />
       </LocalizationProvider>

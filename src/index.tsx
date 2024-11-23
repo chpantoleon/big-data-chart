@@ -7,7 +7,6 @@ import { CookiesProvider } from 'react-cookie';
 import { SnackbarProvider } from 'notistack';
 import { CssBaseline } from '@mui/material';
 
-
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
 );
@@ -15,7 +14,7 @@ root.render(
   <React.StrictMode>
     <SnackbarProvider
         preventDuplicate
-        anchorOrigin={{horizontal: 'right', vertical: 'bottom'}}
+        anchorOrigin={{horizontal: 'center', vertical: 'bottom'}}
       >
       <CookiesProvider defaultSetOptions={{ path: '/' }}>
         <CssBaseline />
