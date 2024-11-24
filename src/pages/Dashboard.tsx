@@ -36,7 +36,7 @@ const Dashboard = () => {
   const [width, setWidth] = useState<number>(800)
   const [accuracy, setAccuracy] = useState<number>(0.95)
 
-  const [measures, setMeasures] = useState<number[]>([]);
+  const [measures, setMeasures] = useState<number[]>([1]);
 
   const [datasource, setDatasource] = useState<string>("influx")
   const [schema, setSchema] = useState<string>("more")
@@ -53,7 +53,6 @@ const Dashboard = () => {
 
   const fetchMetadata = async () => {
     setLoading(true)
-    setMeasures([])
     try {
       const response = await apiService.getMetadata(
         datasource,
@@ -75,8 +74,12 @@ const Dashboard = () => {
     }
   }
 
-  const fetchData = async (from: Date, to: Date) => {
+  const fetchData = async (from: Date, to: Date, metadata: Metadata) => {
     if (!height || !width) {
+      return;
+    }
+
+    if (from.getTime() < metadata.timeRange.from || to.getTime() > metadata.timeRange.to) {
       return;
     }
 
@@ -93,7 +96,7 @@ const Dashboard = () => {
       query: {
         from: from,
         to: to,
-        measures: [1],
+        measures: measures,
         viewPort: {
           width: width,
           height: height
@@ -104,10 +107,10 @@ const Dashboard = () => {
       table: table
     };
     try {
-      const queryResultsDto = await apiService.getData(datasource, queryToQueryDto(request), controller.signal);
-      if (queryResultsDto) {
-        setQueryResults(queryResultsDto)
-      }
+      console.log('loading data')
+      const queryResults = await apiService.getData(datasource, queryToQueryDto(request), controller.signal);
+      console.log('got response')
+      setQueryResults(queryResults)
     } catch (error) {
       console.error(error)
       if (axios.isCancel(error)) {
@@ -140,10 +143,6 @@ const Dashboard = () => {
     setMeasures(typeof value === "string" ? value.split(",").map(Number) : value);
   };
 
-  const handleMeasureRemove = (measureToRemove: number) => {
-    setMeasures((prev) => prev.filter(measure => measure !== measureToRemove));
-  };
-
   const decreaseAccuracy = () =>
     setAccuracy(prev => {
       if (prev <= min) {
@@ -166,9 +165,7 @@ const Dashboard = () => {
     }
   }
 
-  const debouncedFetchData = useDebouncedCallback((from, to) => fetchData(from, to), 100)
-
-  const timestampToDate = (timestamp?: number): Date | null => timestamp ? new Date(timestamp) : null
+  const debouncedFetchData = useDebouncedCallback((from, to, metadata) => fetchData(from, to, metadata!), 100)
 
   useEffect(() => {
     fetchMetadata()
@@ -178,8 +175,8 @@ const Dashboard = () => {
     if (!metadata) {
       return;
     }
-    // debouncedFetchData(from, to)
-  }, [metadata, measures, height, width, schema, table, accuracy])
+    debouncedFetchData(from.toDate(), to.toDate(), metadata)
+  }, [from, to, metadata, measures, height, width, schema, table, accuracy])
 
   return (
     <Box sx={{flexGrow: 1}}>
@@ -294,7 +291,7 @@ const Dashboard = () => {
                   label="From"
                   value={from}
                   slotProps={{ textField: { size: 'small' } }}
-                  onChange={(newValue) => {
+                  onAccept={(newValue) => {
                     if (newValue) {
                       setFrom(newValue);
                     }
@@ -304,7 +301,7 @@ const Dashboard = () => {
                   label="To"
                   value={to}
                   slotProps={{ textField: { size: 'small' } }}
-                  onChange={(newValue) => {
+                  onAccept={(newValue) => {
                     if (newValue) {
                       setTo(newValue);
                     }
@@ -366,13 +363,16 @@ const Dashboard = () => {
             >
             <Grid container sx={{ pt: 1}}>
               <Grid size={12}>
-                {/*{Object.entries(queryResults?.data).map(([key, dataPoints]) => (*/}
-                  <Chart
-                    width={1040}
-                    series={[queryResults?.data["1"]!]}
-                    // fetchData={async (from: number, to: number) => await debouncedFetchData(from, to)}
-                  />
-                {/*))}*/}
+                {queryResults && (
+                <Chart
+                  width={1040}
+                  series={[queryResults.data["1"]!]}
+                  onChange={(from: number, to: number) => {
+                    setFrom(dayjs(from))
+                    setTo(dayjs(to))
+                  }}
+                />
+                )}
               </Grid>
             </Grid>
             </Card>
