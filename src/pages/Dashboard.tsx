@@ -254,7 +254,7 @@ const Dashboard = () => {
     circle
       .on('mouseover', (elem: SVGCircleElement) => {
         const tooltipGroup = svg.append('g').attr('class', 'tooltip-group');
-        const horizontalOffset = cx > 900 ? - 50 : 0;
+        const horizontalOffset = cx > 900 ? -50 : 0;
         const verticalOffset = cy < 25 ? 50 : -15;
         const text = tooltipGroup
           .append('text')
@@ -382,6 +382,7 @@ const Dashboard = () => {
         .data(formattedData)
         .enter()
         .append('rect')
+        .attr('class', 'point')
         .attr('x', (d: any) => x(d[0]))
         .attr('y', (d: any) => y(d[1]))
         .attr('width', 1)
@@ -420,7 +421,7 @@ const Dashboard = () => {
           );
 
           chartPlane
-            .selectAll('rect')
+            .selectAll('.point')
             .attr('x', (d: any) => newX(d[0]))
             .attr('y', (d: any) => y(d[1]));
 
@@ -446,30 +447,8 @@ const Dashboard = () => {
 
     const containerHeight = chartHeight - margin.top;
     errors.map((error: ErrorDto, index: number) => {
-      // function addOrangeTooltip(d: any, x: any, y: any) {
-      //   svg
-      //     .append('text')
-      //     .attr('class', 'eps-tooltip')
-      //     .style('text-anchor', 'middle')
-      //     .text(d.value)
-      //     .attr('x', x)
-      //     .attr('y', y);
-
-      //   // Remove trigger must come after text
-      //   svg
-      //     .append('circle')
-      //     .attr('class', 'overlay')
-      //     .attr('r', 15)
-      //     .attr('cx', x)
-      //     .attr('cy', y)
-      //     .on('mouseout', function (d: any) {
-      //       //@ts-ignore
-      //       d3.select(this).remove();
-      //       d3.selectAll('.eps-tooltip').remove();
-      //     });
-      // }
-
       const svg = d3.select(`#svg${index} > g`);
+
       pixelArrayToCooordinates(error.falsePixels).map(
         ({ x, y }: { x: number; y: number }, index: number) => {
           addCircle({ x, y }, 'red', containerHeight, svg);
@@ -481,6 +460,29 @@ const Dashboard = () => {
           addCircle({ x, y }, 'orange', containerHeight, svg);
         }
       );
+
+      const tooltipGroup = svg.append('g').attr('class', 'info-group');
+      const text = tooltipGroup
+        .append('text')
+        .attr('class', 'info')
+        .style('text-anchor', 'middle')
+        .style('stroke-width', '1px')
+        .attr('font-size', 'smaller')
+        .text(`Error: ${error.error}`)
+        .attr('x', width - margin.left - margin.right - 67)
+        .attr('y', margin.top + margin.bottom);
+
+      const bbox = text.node().getBBox();
+
+      tooltipGroup
+        .insert('rect', 'text')
+        .attr('x', bbox.x - 10)
+        .attr('y', bbox.y - 5)
+        .attr('width', bbox.width + 20)
+        .attr('height', bbox.height + 10)
+        .style('fill', 'lightgrey')
+        .style('stroke', 'black')
+        .style('stroke-width', '1px');
     });
   }, [queryResults, metadata, height]);
 
