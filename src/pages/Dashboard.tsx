@@ -1,4 +1,4 @@
-import React, { MouseEvent, SyntheticEvent, useEffect, useState, useRef } from 'react';
+import { MouseEvent, SyntheticEvent, useEffect, useState, useRef } from 'react';
 import * as d3 from 'd3';
 import Box from '@mui/material/Box';
 import Slider from '@mui/material/Slider';
@@ -46,8 +46,8 @@ const Dashboard = () => {
   const [queryResults, setQueryResults] = useState<QueryResultsDto>();
 
   const abortControllerRef = useRef<AbortController | null>(null);
-  const svgRef = useRef<SVGSVGElement | null>(null);
 
+  const margin = { top: 20, right: 0, bottom: 20, left: 40 };
   const min = 0;
   const max = 0.95;
   const step = 0.05;
@@ -63,8 +63,6 @@ const Dashboard = () => {
       return d3.timeFormat('%H:%M:%S.%L'); // Show time with milliseconds
     }
   }
-
-  const margin = { top: 20, right: 0, bottom: 20, left: 40 };
 
   const fetchMetadata = async () => {
     setLoading(true);
@@ -117,6 +115,7 @@ const Dashboard = () => {
       schema: schema,
       table: table,
     };
+
     try {
       const queryResults = await apiService.getData(
         datasource,
@@ -125,7 +124,6 @@ const Dashboard = () => {
       );
 
       setQueryResults(queryResults);
-      console.log('set query results');
     } catch (error) {
       console.error(error);
       if (axios.isCancel(error)) {
@@ -192,40 +190,32 @@ const Dashboard = () => {
     100
   );
 
+  // reset zoom
   useEffect(() => {
-    if (!svgRef.current) return;
+    if (!queryResults) return;
 
-    const svg = d3.select(svgRef.current);
-    svg.call(d3.zoom().transform, d3.zoomIdentity);
+    const series = Object.values(queryResults!.data);
+    series.map((_, index) => {
+      const svg = d3.select(`#svg${index}`);
+      svg.call(d3.zoom().transform, d3.zoomIdentity);
+    });
   }, [queryResults]);
 
+  // render chart
   useEffect(() => {
-    if (!queryResults || !svgRef.current) {
-      return;
-    }
+    if (!queryResults) return;
 
     const series = Object.values(queryResults.data);
 
+    let chartHeight = height / measures.length;
+
     const containerWidth = width - margin.left - margin.right;
-    const containerHeight = height / series.length - margin.top - margin.bottom;
+    const containerHeight = chartHeight - margin.top - margin.bottom;
 
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove(); // Clear previous render
-
-    if (series[0].length === 0) {
-      // Display "No data" message
-      svg
-        .append('text')
-        .attr('x', width / 2)
-        .attr('y', height / 2)
-        .attr('text-anchor', 'middle')
-        .attr('alignment-baseline', 'middle')
-        .attr('font-size', '16px')
-        .attr('fill', 'gray')
-        .text('No data');
-      return;
-    }
     series.map((data, index) => {
+      const svg = d3.select(`#svg${index}`);
+      svg.selectAll('*').remove(); // Clear previous render
+
       const chartPlane = svg.append('g');
       // Convert x to Date from timestamp
       const formattedData = data.map((d) => [new Date(d.timestamp), d.value] as [Date, number]);
@@ -240,10 +230,7 @@ const Dashboard = () => {
         .scaleLinear()
         .domain(d3.extent(formattedData, (d: any) => d[1]) as number[])
         .nice()
-        .range([
-          height / series.length - margin.bottom,
-          margin.top * (index + 1) - margin.bottom * index,
-        ]);
+        .range([chartHeight - margin.bottom, margin.top]);
 
       // Function to add X gridlines
       const makeXGridlines = () => d3.axisBottom(x).ticks(7);
@@ -255,10 +242,7 @@ const Dashboard = () => {
       chartPlane
         .append('g')
         .attr('class', 'grid')
-        .attr(
-          'transform',
-          `translate(0, ${(height / series.length) * (index + 1) - margin.bottom})`
-        )
+        .attr('transform', `translate(0, ${chartHeight})`)
         .call(
           makeXGridlines()
             .tickSize(-containerHeight) // Extend lines down to the bottom
@@ -269,7 +253,7 @@ const Dashboard = () => {
       chartPlane
         .append('g')
         .attr('class', 'grid')
-        .attr('transform', `translate(${margin.left}, ${(height / series.length) * index})`)
+        .attr('transform', `translate(${margin.left}, 0)`)
         .call(
           makeYGridlines()
             .tickSize(-containerWidth) // Extend lines across the width
@@ -288,19 +272,17 @@ const Dashboard = () => {
       // X Axis
       const xAxis = chartPlane
         .append('g')
-        .attr(
-          'transform',
-          `translate(0, ${(height / series.length) * (index + 1) - margin.bottom})`
-        )
+        .attr('transform', `translate(0, ${chartHeight - margin.bottom})`)
         .call(d3.axisBottom(x).ticks(7).tickFormat(d3.timeFormat('%d-%m-%Y')));
 
       // Y Axis
       chartPlane
         .append('g')
-        .attr('transform', `translate(${margin.left}, ${(height / series.length) * index})`)
-        .call(d3.axisLeft(y));
+        .attr('transform', `translate(${margin.left}, 0)`)
+        .call(d3.axisLeft(y).ticks(7));
 
       chartPlane
+        .append('g')
         .selectAll('rect')
         .data(formattedData)
         .enter()
@@ -311,54 +293,51 @@ const Dashboard = () => {
         .attr('height', 1)
         .attr('fill', 'steelblue');
 
-      // // Add path
-      // const line = d3.line()
-      //   .x((d: any) => x(d[0]))
-      //   .y((d: any) => y(d[1]))
-      //   .curve(d3.curveMonotoneX);
+      // Add path
+      const line = d3
+        .line()
+        .x((d: any) => x(d[0]))
+        .y((d: any) => y(d[1]))
+        .curve(d3.curveMonotoneX);
 
-      // chartPlane.append('path')
-      //   .datum(formattedData)
-      //   .attr('fill', 'none')
-      //   .attr('stroke', 'steelblue')
-      //   .attr('stroke-width', 1)
-      //   .attr('d', line);
+      const path = chartPlane
+        .append('path')
+        .attr('class', 'path')
+        .datum(formattedData)
+        .attr('fill', 'none')
+        .attr('stroke', 'steelblue')
+        .attr('stroke-width', 1)
+        .attr('d', line);
 
       const zoom = d3
         .zoom()
         .on('zoom', (event: any) => {
           const newX = event.transform.rescaleX(x);
           xAxis.call(d3.axisBottom(newX).ticks(7).tickFormat(getTickFormat(event.transform.k)));
+          path.attr('transform', d3.zoomIdentity)//.attr("d", line.x((d: any) => newX(d.x)));
 
           chartPlane
             .selectAll('rect')
             .attr('x', (d: any) => newX(d[0]))
             .attr('y', (d: any) => y(d[1]))
             .attr('transform', d3.zoomIdentity);
-
-          // const line = d3.line()
-          //   .x((d: any) => newX(d[0]))
-          //   .y((d: any) => y(d[1]))
-          //   .curve(d3.curveMonotoneX);
-
-          // chartPlane.select('path')
-          // .attr('d', line.x((d: any) => newX(d[0])));
         })
         .on('end', (event: any) => {
           const newX = event.transform.rescaleX(x);
-          xAxis.call(d3.axisBottom(newX).ticks(7).tickFormat(getTickFormat(event.transform.k)));
           const [start, end] = newX.domain().map((d: any) => d.getTime());
           fetchData(dayjs(start).toDate(), dayjs(end).toDate(), metadata!);
         });
 
       svg.call(zoom);
     });
-  }, [queryResults, metadata]);
+  }, [queryResults, metadata, height]);
 
+  // fetch metadata
   useEffect(() => {
     fetchMetadata();
   }, [table, datasource, schema]);
 
+  // fetch data
   useEffect(() => {
     if (!metadata || !from || !to || !measures.length) {
       return;
@@ -535,9 +514,13 @@ const Dashboard = () => {
               <Grid container sx={{ pt: 1 }}>
                 {!measures.length ? (
                   <>Select at least one measure to display</>
+                ) : !queryResults ? (
+                  <>No data</>
                 ) : (
                   <Grid size={12}>
-                    {queryResults && <svg ref={svgRef} width={width} height={height} />}
+                    {Object.values(queryResults!.data).map((_, index) => (
+                      <svg id={`svg${index}`} key={`svg${index}`} width={width} height={height / measures.length} />
+                    ))}
                   </Grid>
                 )}
               </Grid>
