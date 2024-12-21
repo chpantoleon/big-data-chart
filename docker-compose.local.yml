@@ -3,7 +3,6 @@ services:
     image: nginx:1.27
     volumes:
       - ./templates/default.conf.template:/etc/nginx/templates/default.conf.template:ro
-      - ./build:/usr/share/nginx/html:ro
     ports:
       - "9090:80"
     environment:
