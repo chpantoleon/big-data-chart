@@ -21,9 +21,10 @@ import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
 import dayjs, { Dayjs } from 'dayjs';
 import RemoveIcon from '@mui/icons-material/Remove';
 import AddIcon from '@mui/icons-material/Add';
+import CardContent from '@mui/material/CardContent';
 
 import { Measure, Metadata, metadataDtoToDomain } from '../interfaces/metadata';
-import { QueryResultsDto } from '../interfaces/data';
+import { ErrorDto, QueryResultsDto } from '../interfaces/data';
 import { Query, queryToQueryDto } from '../interfaces/query';
 import { Toolbar } from '@mui/material';
 
@@ -33,7 +34,7 @@ const Dashboard = () => {
   const [from, setFrom] = useState<Dayjs>(dayjs(1330144930991));
   const [to, setTo] = useState<Dayjs>(dayjs(1330244930991));
   const [height, setHeight] = useState<number>(400);
-  const [width, setWidth] = useState<number>(1040);
+  const [width, setWidth] = useState<number>(1000);
   const [accuracy, setAccuracy] = useState<number>(0.95);
 
   const [measures, setMeasures] = useState<Measure[]>([]);
@@ -52,17 +53,62 @@ const Dashboard = () => {
   const max = 0.95;
   const step = 0.05;
 
-  function getTickFormat(scale: number) {
-    if (scale < 100) {
-      return d3.timeFormat('%d-%m-%Y'); // Show full date
-    } else if (scale < 2500) {
+  const pixelArrayToCooordinates = (pixelArray: string[][]): { x: number; y: number }[] =>
+    pixelArray
+      .map((range, index) => {
+        if (!range.length) return null;
+
+        return {
+          column: index,
+        };
+      })
+      .filter((range) => range)
+      .flatMap((range) =>
+        pixelArray[range!.column].flatMap(parseRange).map((y) => {
+          return {
+            x: range!.column,
+            y,
+          };
+        })
+      );
+
+  const parseRange = (range: string): number[] => {
+    const match = range.match(/^([\[\(])(\-?\d+)\.\.(\-?\d+)([\]\)])$/);
+
+    if (!match) {
+      throw new Error(
+        `Invalid range format. Example valid format: '[154..155]' or '(154..155]', ${range} given.`
+      );
+    }
+
+    const [, startBracket, start, end, endBracket] = match;
+
+    let startNum = parseInt(start, 10);
+    let endNum = parseInt(end, 10);
+
+    if (startBracket === '(') {
+      startNum += 1;
+    }
+    if (endBracket === ')') {
+      endNum -= 1;
+    }
+
+    if (startNum === endNum) {
+      return [startNum];
+    }
+
+    return [startNum, endNum];
+  };
+
+  const getTickFormat = (scale: number) => {
+    if (scale < 2500) {
       return d3.timeFormat('%d-%m-%Y %H:%M'); // Show date and time
     } else if (scale < 81000000) {
       return d3.timeFormat('%H:%M:%S'); // Show time
     } else {
       return d3.timeFormat('%H:%M:%S.%L'); // Show time with milliseconds
     }
-  }
+  };
 
   const fetchMetadata = async () => {
     setLoading(true);
@@ -107,8 +153,8 @@ const Dashboard = () => {
         to: to,
         measures: measures.map(({ id }) => id),
         viewPort: {
-          width: width,
-          height: height,
+          width: width - margin.left - margin.right,
+          height: height / measures.length - margin.bottom - margin.top,
         },
         accuracy: accuracy,
       },
@@ -190,6 +236,54 @@ const Dashboard = () => {
     100
   );
 
+  const addCircle = (
+    { x, y }: { x: number; y: number },
+    color: string,
+    containerHeight: number,
+    svg: any
+  ) => {
+    const cx = x + margin.left + margin.right;
+    const cy = containerHeight - y;
+    const circle = svg
+      .append('circle')
+      .attr('cx', x + margin.left + margin.right)
+      .attr('cy', containerHeight - y)
+      .attr('r', '2px')
+      .style('fill', `${color}`);
+
+    circle
+      .on('mouseover', (elem: SVGCircleElement) => {
+        const tooltipGroup = svg.append('g').attr('class', 'tooltip-group');
+        const horizontalOffset = cx > 900 ? - 50 : 0;
+        const verticalOffset = cy < 25 ? 50 : -15;
+        const text = tooltipGroup
+          .append('text')
+          .attr('class', 'tooltip')
+          .style('text-anchor', 'middle')
+          .text(`x: ${x}, y: ${y}`)
+          .attr('fill', 'white')
+          .attr('x', cx + horizontalOffset)
+          .attr('y', cy + verticalOffset);
+
+        const bbox = text.node().getBBox();
+
+        tooltipGroup
+          .insert('rect', 'text')
+          .attr('x', bbox.x - 10)
+          .attr('y', bbox.y - 5)
+          .attr('width', bbox.width + 20)
+          .attr('height', bbox.height + 10)
+          .attr('rx', 5)
+          .attr('ry', 5)
+          .style('fill', 'grey')
+          .style('stroke', 'black')
+          .style('stroke-width', '1px');
+      })
+      .on('mouseout', () => {
+        d3.selectAll('.tooltip-group').remove();
+      });
+  };
+
   // reset zoom
   useEffect(() => {
     if (!queryResults) return;
@@ -206,6 +300,7 @@ const Dashboard = () => {
     if (!queryResults) return;
 
     const series = Object.values(queryResults.data);
+    const errors = Object.values(queryResults.error);
 
     let chartHeight = height / measures.length;
 
@@ -273,7 +368,7 @@ const Dashboard = () => {
       const xAxis = chartPlane
         .append('g')
         .attr('transform', `translate(0, ${chartHeight - margin.bottom})`)
-        .call(d3.axisBottom(x).ticks(7).tickFormat(d3.timeFormat('%d-%m-%Y')));
+        .call(d3.axisBottom(x).ticks(7).tickFormat(d3.timeFormat('%d-%m-%Y %H:%M')));
 
       // Y Axis
       chartPlane
@@ -314,13 +409,22 @@ const Dashboard = () => {
         .on('zoom', (event: any) => {
           const newX = event.transform.rescaleX(x);
           xAxis.call(d3.axisBottom(newX).ticks(7).tickFormat(getTickFormat(event.transform.k)));
-          path.attr('transform', d3.zoomIdentity)//.attr("d", line.x((d: any) => newX(d.x)));
+
+          path.attr(
+            'd',
+            d3
+              .line()
+              .x((d: any) => newX(d[0]))
+              .y((d: any) => y(d[1]))
+              .curve(d3.curveMonotoneX)
+          );
 
           chartPlane
             .selectAll('rect')
             .attr('x', (d: any) => newX(d[0]))
-            .attr('y', (d: any) => y(d[1]))
-            .attr('transform', d3.zoomIdentity);
+            .attr('y', (d: any) => y(d[1]));
+
+          svg.selectAll('circle').remove();
         })
         .on('end', (event: any) => {
           const newX = event.transform.rescaleX(x);
@@ -329,6 +433,54 @@ const Dashboard = () => {
         });
 
       svg.call(zoom);
+    });
+  }, [queryResults, metadata, height]);
+
+  // render error pixels
+  useEffect(() => {
+    if (!queryResults) return;
+
+    const errors = Object.values(queryResults.error);
+
+    let chartHeight = height / measures.length;
+
+    const containerHeight = chartHeight - margin.top;
+    errors.map((error: ErrorDto, index: number) => {
+      // function addOrangeTooltip(d: any, x: any, y: any) {
+      //   svg
+      //     .append('text')
+      //     .attr('class', 'eps-tooltip')
+      //     .style('text-anchor', 'middle')
+      //     .text(d.value)
+      //     .attr('x', x)
+      //     .attr('y', y);
+
+      //   // Remove trigger must come after text
+      //   svg
+      //     .append('circle')
+      //     .attr('class', 'overlay')
+      //     .attr('r', 15)
+      //     .attr('cx', x)
+      //     .attr('cy', y)
+      //     .on('mouseout', function (d: any) {
+      //       //@ts-ignore
+      //       d3.select(this).remove();
+      //       d3.selectAll('.eps-tooltip').remove();
+      //     });
+      // }
+
+      const svg = d3.select(`#svg${index} > g`);
+      pixelArrayToCooordinates(error.falsePixels).map(
+        ({ x, y }: { x: number; y: number }, index: number) => {
+          addCircle({ x, y }, 'red', containerHeight, svg);
+        }
+      );
+
+      pixelArrayToCooordinates(error.missingPixels).map(
+        ({ x, y }: { x: number; y: number }, index: number) => {
+          addCircle({ x, y }, 'orange', containerHeight, svg);
+        }
+      );
     });
   }, [queryResults, metadata, height]);
 
@@ -348,7 +500,7 @@ const Dashboard = () => {
   return (
     <Box sx={{ flexGrow: 1 }}>
       <AppBar position="relative">
-        <Toolbar>
+        <Toolbar variant="dense">
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Big Data Chart
           </Typography>
@@ -358,6 +510,82 @@ const Dashboard = () => {
         <Grid container spacing={2}>
           <Grid size={3}>
             <Card variant="outlined" sx={{ p: 1 }}>
+              <Box>
+                <Typography variant="overline">Parameters</Typography>
+                <Grid container spacing={2} sx={{ pb: 1 }} alignItems={'center'}>
+                  <Grid size={12}>
+                    <DateTimePicker
+                      label="From"
+                      value={from}
+                      slotProps={{ textField: { size: 'small', fullWidth: true } }}
+                      onAccept={(newValue) => {
+                        if (newValue) {
+                          setFrom(newValue);
+                        }
+                      }}
+                    />
+                  </Grid>
+                  <Grid size={12}>
+                    <DateTimePicker
+                      label="To"
+                      value={to}
+                      slotProps={{ textField: { size: 'small', fullWidth: true } }}
+                      onAccept={(newValue) => {
+                        if (newValue) {
+                          setTo(newValue);
+                        }
+                      }}
+                    />
+                  </Grid>
+                  <Grid size={12}>
+                    <Box
+                      display={'flex'}
+                      flexDirection={'column'}
+                      justifyContent={'space-between'}
+                      flexGrow={2}
+                    >
+                      <Typography gutterBottom>Min. Accuracy: {accuracy}</Typography>
+                      <Box
+                        display={'flex'}
+                        flexDirection={'row'}
+                        alignItems={'center'}
+                        justifyContent={'space-between'}
+                        gap={1}
+                      >
+                        <IconButton
+                          aria-label="decrease accuracy"
+                          size="small"
+                          color={'primary'}
+                          onClick={decreaseAccuracy}
+                          disabled={accuracy <= min}
+                        >
+                          <RemoveIcon fontSize="inherit" />
+                        </IconButton>
+                        <Slider
+                          onChange={handleAccuracyChange}
+                          value={accuracy}
+                          min={0}
+                          max={0.95}
+                          step={0.05}
+                          shiftStep={0.05}
+                          aria-label="Accuracy"
+                          valueLabelDisplay="auto"
+                        />
+                        <IconButton
+                          aria-label="increase accuracy"
+                          size="small"
+                          color={'primary'}
+                          onClick={increaseAccuracy}
+                          disabled={accuracy >= max}
+                        >
+                          <AddIcon fontSize="inherit" />
+                        </IconButton>
+                      </Box>
+                    </Box>
+                  </Grid>
+                </Grid>
+              </Box>
+              <Divider />
               <Box>
                 <Typography variant="overline">Datasource</Typography>
                 <List component="nav" aria-label="datasource">
@@ -437,94 +665,34 @@ const Dashboard = () => {
             </Card>
           </Grid>
           <Grid size={9}>
-            <Card variant="outlined" sx={{ p: 1 }}>
-              <Grid container spacing={2} sx={{ pb: 1 }} alignItems={'center'}>
-                <Grid size={6}>
-                  <DateTimePicker
-                    label="From"
-                    value={from}
-                    slotProps={{ textField: { size: 'small' } }}
-                    onAccept={(newValue) => {
-                      if (newValue) {
-                        setFrom(newValue);
-                      }
-                    }}
-                  />
-                  <DateTimePicker
-                    label="To"
-                    value={to}
-                    slotProps={{ textField: { size: 'small' } }}
-                    onAccept={(newValue) => {
-                      if (newValue) {
-                        setTo(newValue);
-                      }
-                    }}
-                  />
-                </Grid>
-                <Grid size={6}>
-                  <Box
-                    display={'flex'}
-                    flexDirection={'column'}
-                    justifyContent={'space-between'}
-                    flexGrow={2}
-                  >
-                    <Typography gutterBottom>Min. Accuracy: {accuracy}</Typography>
-                    <Box
-                      display={'flex'}
-                      flexDirection={'row'}
-                      alignItems={'center'}
-                      justifyContent={'space-between'}
-                      gap={1}
-                    >
-                      <IconButton
-                        aria-label="decrease accuracy"
-                        size="small"
-                        color={'primary'}
-                        onClick={decreaseAccuracy}
-                        disabled={accuracy <= min}
-                      >
-                        <RemoveIcon fontSize="inherit" />
-                      </IconButton>
-                      <Slider
-                        onChange={handleAccuracyChange}
-                        value={accuracy}
-                        min={0}
-                        max={0.95}
-                        step={0.05}
-                        shiftStep={0.05}
-                        aria-label="Accuracy"
-                        valueLabelDisplay="auto"
-                      />
-                      <IconButton
-                        aria-label="increase accuracy"
-                        size="small"
-                        color={'primary'}
-                        onClick={increaseAccuracy}
-                        disabled={accuracy >= max}
-                      >
-                        <AddIcon fontSize="inherit" />
-                      </IconButton>
-                    </Box>
-                  </Box>
-                </Grid>
-              </Grid>
-            </Card>
-            <Divider />
-            <Card variant="outlined" sx={{ p: 1 }}>
-              <Grid container sx={{ pt: 1 }}>
-                {!measures.length ? (
-                  <>Select at least one measure to display</>
-                ) : !queryResults ? (
-                  <>No data</>
-                ) : (
-                  <Grid size={12}>
-                    {Object.values(queryResults!.data).map((_, index) => (
-                      <svg id={`svg${index}`} key={`svg${index}`} width={width} height={height / measures.length} />
-                    ))}
-                  </Grid>
-                )}
-              </Grid>
-            </Card>
+            {!measures.length ? (
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography sx={{ color: 'text.secondary', fontSize: 14, textAlign: 'center' }}>
+                    Select at least one measure to display
+                  </Typography>
+                </CardContent>
+              </Card>
+            ) : !queryResults ? (
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography sx={{ color: 'text.secondary', fontSize: 14, textAlign: 'center' }}>
+                    No data
+                  </Typography>
+                </CardContent>
+              </Card>
+            ) : (
+              Object.values(queryResults.data).map((_, index) => (
+                <Card key={`svg${index}`} variant="outlined">
+                  <CardContent>
+                    <Typography sx={{ color: 'text.secondary', fontSize: 14 }}>
+                      {metadata?.header[index]}
+                    </Typography>
+                    <svg id={`svg${index}`} width={width} height={height / measures.length} />
+                  </CardContent>
+                </Card>
+              ))
+            )}
           </Grid>
         </Grid>
       </Box>

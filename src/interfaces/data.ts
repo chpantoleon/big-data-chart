@@ -14,14 +14,16 @@ export interface QueryResultsDto {
     intervalString: string;
   };
   groupByResults: null | Record<string, unknown>;
-  error: Record<string, {
-    error: number;
-    falsePixels: unknown[];
-    missingPixels: unknown[];
-  }>;
+  error: Record<string, ErrorDto>;
   ioCount: number;
   queryTime: number;
   progressiveQueryTime: number;
   aggFactors: Record<string, number>;
   flag: boolean;
 };
+
+export interface ErrorDto {
+  error: number;
+  falsePixels: string[][];
+  missingPixels: string[][];
+}

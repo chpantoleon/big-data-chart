@@ -22,6 +22,7 @@ export interface Measure {
 
 export interface Metadata {
   id: string;
+  header: string[];
   schema: string;
   tableName: string;
   timeFormat: string;
