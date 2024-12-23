@@ -1,4 +1,4 @@
-import { MouseEvent, SyntheticEvent, useEffect, useState, useRef } from 'react';
+import { MouseEvent, SyntheticEvent, useEffect, useState, useRef, Fragment } from 'react';
 import * as d3 from 'd3';
 import Box from '@mui/material/Box';
 import Slider from '@mui/material/Slider';
@@ -31,8 +31,8 @@ import { Toolbar } from '@mui/material';
 const Dashboard = () => {
   const [loading, setLoading] = useState<boolean>(false);
 
-  const [from, setFrom] = useState<Dayjs>(dayjs(1330144930991));
-  const [to, setTo] = useState<Dayjs>(dayjs(1330244930991));
+  const [from, setFrom] = useState<Date>(dayjs(1330144930991).toDate());
+  const [to, setTo] = useState<Date>(dayjs(1330244930991).toDate());
   const [height, setHeight] = useState<number>(400);
   const [width, setWidth] = useState<number>(1000);
   const [accuracy, setAccuracy] = useState<number>(0.95);
@@ -64,12 +64,12 @@ const Dashboard = () => {
       })
       .filter((range) => range)
       .flatMap((range) =>
-        pixelArray[range!.column].flatMap(parseRange).map((y) => {
-          return {
+        pixelArray[range!.column]
+        .flatMap(parseRange)
+        .map((y) => ({
             x: range!.column,
             y,
-          };
-        })
+        }))
       );
 
   const parseRange = (range: string): number[] => {
@@ -97,7 +97,11 @@ const Dashboard = () => {
       return [startNum];
     }
 
-    return [startNum, endNum];
+    const list = [];
+    for (var i = startNum; i <= endNum; i++) {
+      list.push(i);
+    }
+    return list;
   };
 
   const getTickFormat = (scale: number) => {
@@ -168,6 +172,10 @@ const Dashboard = () => {
         queryToQueryDto(request),
         controller.signal
       );
+
+      if (!queryResults) {
+        return;
+      }
 
       setQueryResults(queryResults);
     } catch (error) {
@@ -248,7 +256,7 @@ const Dashboard = () => {
       .append('circle')
       .attr('cx', x + margin.left + margin.right)
       .attr('cy', containerHeight - y)
-      .attr('r', '2px')
+      .attr('r', '1px')
       .style('fill', `${color}`);
 
     circle
@@ -300,7 +308,6 @@ const Dashboard = () => {
     if (!queryResults) return;
 
     const series = Object.values(queryResults.data);
-    const errors = Object.values(queryResults.error);
 
     let chartHeight = height / measures.length;
 
@@ -316,22 +323,25 @@ const Dashboard = () => {
       const formattedData = data.map((d) => [new Date(d.timestamp), d.value] as [Date, number]);
 
       // Set up scales
+      const minTs = d3.min(formattedData, (d: any) => d[0]) as Date;
+      const maxTs = d3.max(formattedData, (d: any) => d[0]) as Date;
       const x = d3
         .scaleTime()
-        .domain(d3.extent(formattedData, (d: any) => d[0]) as Date[])
+        .domain([minTs, maxTs])
         .range([margin.left, width - margin.right]);
 
+      const minValue = d3.min(formattedData, (d: any) => d[1]);
+      const maxValue = d3.max(formattedData, (d: any) => d[1]);
       const y = d3
         .scaleLinear()
-        .domain(d3.extent(formattedData, (d: any) => d[1]) as number[])
-        .nice()
+        .domain([minValue, maxValue])
         .range([chartHeight - margin.bottom, margin.top]);
 
       // Function to add X gridlines
-      const makeXGridlines = () => d3.axisBottom(x).ticks(7);
+      const makeXGridlines = () => d3.axisBottom(x);
 
       // Function to add Y gridlines
-      const makeYGridlines = () => d3.axisLeft(y).ticks(7);
+      const makeYGridlines = () => d3.axisLeft(y).ticks(7).tickValues([...y.ticks(7), y.domain()[1]]);
 
       // Add X gridlines
       chartPlane
@@ -340,7 +350,7 @@ const Dashboard = () => {
         .attr('transform', `translate(0, ${chartHeight})`)
         .call(
           makeXGridlines()
-            .tickSize(-containerHeight) // Extend lines down to the bottom
+            .tickSize(-height / measures.length + margin.top) // Extend lines down to the bottom
             .tickFormat(() => '') // No tick labels
         );
 
@@ -429,8 +439,10 @@ const Dashboard = () => {
         })
         .on('end', (event: any) => {
           const newX = event.transform.rescaleX(x);
-          const [start, end] = newX.domain().map((d: any) => d.getTime());
-          fetchData(dayjs(start).toDate(), dayjs(end).toDate(), metadata!);
+          const [start, end] = newX.domain().map((d: any) => dayjs(d.getTime()).toDate());
+          setFrom(start);
+          setTo(end);
+          fetchData(start, end, metadata!);
         });
 
       svg.call(zoom);
@@ -496,7 +508,7 @@ const Dashboard = () => {
     if (!metadata || !from || !to || !measures.length) {
       return;
     }
-    debouncedFetchData(from.toDate(), to.toDate(), metadata);
+    debouncedFetchData(from, to, metadata);
   }, [from, to, metadata, measures, height, width, schema, table, accuracy]);
 
   return (
@@ -518,11 +530,12 @@ const Dashboard = () => {
                   <Grid size={12}>
                     <DateTimePicker
                       label="From"
-                      value={from}
+                      disabled={loading}
+                      value={dayjs(from)}
                       slotProps={{ textField: { size: 'small', fullWidth: true } }}
-                      onAccept={(newValue) => {
+                      onAccept={(newValue: Dayjs | null) => {
                         if (newValue) {
-                          setFrom(newValue);
+                          setFrom(newValue.toDate());
                         }
                       }}
                     />
@@ -530,11 +543,12 @@ const Dashboard = () => {
                   <Grid size={12}>
                     <DateTimePicker
                       label="To"
-                      value={to}
+                      disabled={loading}
+                      value={dayjs(to)}
                       slotProps={{ textField: { size: 'small', fullWidth: true } }}
-                      onAccept={(newValue) => {
+                      onAccept={(newValue: Dayjs | null) => {
                         if (newValue) {
-                          setTo(newValue);
+                          setTo(newValue.toDate());
                         }
                       }}
                     />
@@ -559,13 +573,14 @@ const Dashboard = () => {
                           size="small"
                           color={'primary'}
                           onClick={decreaseAccuracy}
-                          disabled={accuracy <= min}
+                          disabled={accuracy <= min || loading}
                         >
                           <RemoveIcon fontSize="inherit" />
                         </IconButton>
                         <Slider
                           onChange={handleAccuracyChange}
                           value={accuracy}
+                          disabled={loading}
                           min={0}
                           max={0.95}
                           step={0.05}
@@ -578,7 +593,7 @@ const Dashboard = () => {
                           size="small"
                           color={'primary'}
                           onClick={increaseAccuracy}
-                          disabled={accuracy >= max}
+                          disabled={accuracy >= max || loading}
                         >
                           <AddIcon fontSize="inherit" />
                         </IconButton>
@@ -684,16 +699,18 @@ const Dashboard = () => {
                 </CardContent>
               </Card>
             ) : (
-              Object.values(queryResults.data).map((_, index) => (
-                <Card key={`svg${index}`} variant="outlined">
-                  <CardContent>
-                    <Typography sx={{ color: 'text.secondary', fontSize: 14 }}>
-                      {metadata?.header[index]}
-                    </Typography>
-                    <svg id={`svg${index}`} width={width} height={height / measures.length} />
-                  </CardContent>
-                </Card>
-              ))
+              <Card variant="outlined">
+                <CardContent>
+                  {Object.values(queryResults.data).map((_, index) => (
+                    <Fragment key={`svg${index}`}>
+                      <Typography variant='body1' sx={{ color: 'text.secondary', fontSize: 14 }}>
+                        {measures[index]?.name}
+                      </Typography>
+                      <svg id={`svg${index}`} width={width} height={height / measures.length} />
+                    </Fragment>
+                  ))}
+                </CardContent>
+              </Card>
             )}
           </Grid>
         </Grid>

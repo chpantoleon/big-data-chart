@@ -8,7 +8,7 @@ import {QueryDto} from "../interfaces/query";
 const prefix = '/data'
 
 interface DataServices {
-  getData(datasource: string, postData: QueryDto, signal: AbortSignal): Promise<QueryResultsDto>
+  getData(datasource: string, postData: QueryDto, signal: AbortSignal): Promise<QueryResultsDto | null>
   getMetadata(
     datasource: string,
     schema: string,
@@ -30,9 +30,12 @@ export const services: DataServices = {
     datasource: string,
     postData: QueryDto,
     signal: AbortSignal
-  ): Promise<QueryResultsDto> => {
+  ): Promise<QueryResultsDto | null> => {
     const response: AxiosResponse<ResponseDto> = await apiClient.post(endpoints.getData(datasource), postData, { signal });
 
+    if (!response) {
+      return null;
+    }
     return response.data.queryResults;
   },
   getMetadata: async (
