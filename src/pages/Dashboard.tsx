@@ -22,11 +22,12 @@ import dayjs, { Dayjs } from 'dayjs';
 import RemoveIcon from '@mui/icons-material/Remove';
 import AddIcon from '@mui/icons-material/Add';
 import CardContent from '@mui/material/CardContent';
+import Switch from '@mui/material/Switch';
 
 import { Measure, Metadata, metadataDtoToDomain } from '../interfaces/metadata';
 import { ErrorDto, QueryResultsDto } from '../interfaces/data';
 import { Query, queryToQueryDto } from '../interfaces/query';
-import { Toolbar } from '@mui/material';
+import { FormControlLabel, FormGroup, Toolbar } from '@mui/material';
 
 const Dashboard = () => {
   const [loading, setLoading] = useState<boolean>(false);
@@ -36,6 +37,9 @@ const Dashboard = () => {
   const [height, setHeight] = useState<number>(400);
   const [width, setWidth] = useState<number>(1000);
   const [accuracy, setAccuracy] = useState<number>(0.95);
+
+  const [isFalsePixelsVisible, setIsFalsePixelsVisible] = useState<boolean>(true);
+  const [isMissingPixelsVisible, setIsMissingPixelsVisible] = useState<boolean>(true);
 
   const [measures, setMeasures] = useState<Measure[]>([]);
 
@@ -64,11 +68,9 @@ const Dashboard = () => {
       })
       .filter((range) => range)
       .flatMap((range) =>
-        pixelArray[range!.column]
-        .flatMap(parseRange)
-        .map((y) => ({
-            x: range!.column,
-            y,
+        pixelArray[range!.column].flatMap(parseRange).map((y) => ({
+          x: range!.column,
+          y,
         }))
       );
 
@@ -341,7 +343,11 @@ const Dashboard = () => {
       const makeXGridlines = () => d3.axisBottom(x);
 
       // Function to add Y gridlines
-      const makeYGridlines = () => d3.axisLeft(y).ticks(7).tickValues([...y.ticks(7), y.domain()[1]]);
+      const makeYGridlines = () =>
+        d3
+          .axisLeft(y)
+          .ticks(7)
+          .tickValues([...y.ticks(7), y.domain()[1]]);
 
       // Add X gridlines
       chartPlane
@@ -447,7 +453,7 @@ const Dashboard = () => {
 
       svg.call(zoom);
     });
-  }, [queryResults, metadata, height]);
+  }, [queryResults, metadata, height, isFalsePixelsVisible, isMissingPixelsVisible]);
 
   // render error pixels
   useEffect(() => {
@@ -461,17 +467,21 @@ const Dashboard = () => {
     errors.map((error: ErrorDto, index: number) => {
       const svg = d3.select(`#svg${index} > g`);
 
-      pixelArrayToCooordinates(error.falsePixels).map(
-        ({ x, y }: { x: number; y: number }, index: number) => {
-          addCircle({ x, y }, 'red', containerHeight, svg);
-        }
-      );
+      if (isFalsePixelsVisible) {
+        pixelArrayToCooordinates(error.falsePixels).map(
+          ({ x, y }: { x: number; y: number }, index: number) => {
+            addCircle({ x, y }, 'red', containerHeight, svg);
+          }
+        );
+      }
 
-      pixelArrayToCooordinates(error.missingPixels).map(
-        ({ x, y }: { x: number; y: number }, index: number) => {
-          addCircle({ x, y }, 'orange', containerHeight, svg);
-        }
-      );
+      if (isMissingPixelsVisible) {
+        pixelArrayToCooordinates(error.missingPixels).map(
+          ({ x, y }: { x: number; y: number }, index: number) => {
+            addCircle({ x, y }, 'orange', containerHeight, svg);
+          }
+        );
+      }
 
       const tooltipGroup = svg.append('g').attr('class', 'info-group');
       const text = tooltipGroup
@@ -496,7 +506,7 @@ const Dashboard = () => {
         .style('stroke', 'black')
         .style('stroke-width', '1px');
     });
-  }, [queryResults, metadata, height]);
+  }, [queryResults, metadata, height, isFalsePixelsVisible, isMissingPixelsVisible]);
 
   // fetch metadata
   useEffect(() => {
@@ -562,7 +572,9 @@ const Dashboard = () => {
                       justifyContent={'space-between'}
                       flexGrow={2}
                     >
-                      <Typography gutterBottom>Min. Accuracy: {accuracy}</Typography>
+                      <Typography variant="body1" gutterBottom>
+                        Accuracy: {accuracy}
+                      </Typography>
                       <Box
                         display={'flex'}
                         flexDirection={'row'}
@@ -587,6 +599,7 @@ const Dashboard = () => {
                           max={max}
                           step={step}
                           shiftStep={step}
+                          size="small"
                           aria-label="Accuracy"
                           valueLabelDisplay="auto"
                         />
@@ -609,6 +622,7 @@ const Dashboard = () => {
                 <Typography variant="overline">Datasource</Typography>
                 <List component="nav" aria-label="datasource">
                   <ListItemButton
+                    dense
                     disabled={loading}
                     selected={datasource === 'influx'}
                     onClick={(event) => handleDatasourceChange(event, 'influx')}
@@ -616,6 +630,7 @@ const Dashboard = () => {
                     <ListItemText primary="influx" />
                   </ListItemButton>
                   <ListItemButton
+                    dense
                     disabled={true}
                     selected={datasource === 'postgres'}
                     onClick={(event) => handleDatasourceChange(event, 'postgres')}
@@ -629,6 +644,7 @@ const Dashboard = () => {
                 <Typography variant="overline">Schema</Typography>
                 <List component="nav" aria-label="schema">
                   <ListItemButton
+                    dense
                     disabled={loading}
                     selected={schema === 'more'}
                     onClick={(event) => handleSchemaChange(event, 'more')}
@@ -642,6 +658,7 @@ const Dashboard = () => {
                 <Typography variant="overline">Table</Typography>
                 <List component="nav" aria-label="table">
                   <ListItemButton
+                    dense
                     disabled={loading}
                     selected={table === 'intel_lab_exp'}
                     onClick={(event) => handleTableChange(event, 'intel_lab_exp')}
@@ -649,6 +666,7 @@ const Dashboard = () => {
                     <ListItemText primary="intel_lab_exp" />
                   </ListItemButton>
                   <ListItemButton
+                    dense
                     disabled={loading}
                     selected={table === 'manufacturing_exp'}
                     onClick={(event) => handleTableChange(event, 'manufacturing_exp')}
@@ -681,6 +699,38 @@ const Dashboard = () => {
                   ))}
                 </Select>
               </Box>
+              <Box>
+                <FormGroup>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        value={isFalsePixelsVisible}
+                        defaultChecked
+                        color="error"
+                        size="small"
+                        onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+                          setIsFalsePixelsVisible(event.target.checked)
+                        }
+                      />
+                    }
+                    label="Display false pixels"
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        value={isMissingPixelsVisible}
+                        defaultChecked
+                        color="warning"
+                        size="small"
+                        onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+                          setIsMissingPixelsVisible(event.target.checked)
+                        }
+                      />
+                    }
+                    label="Display missing pixels"
+                  />
+                </FormGroup>
+              </Box>
             </Card>
           </Grid>
           <Grid size={9}>
@@ -705,7 +755,7 @@ const Dashboard = () => {
                 <CardContent>
                   {Object.values(queryResults.data).map((_, index) => (
                     <Fragment key={`svg${index}`}>
-                      <Typography variant='body1' sx={{ color: 'text.secondary', fontSize: 14 }}>
+                      <Typography variant="body1" sx={{ color: 'text.secondary', fontSize: 14 }}>
                         {measures[index]?.name}
                       </Typography>
                       <svg id={`svg${index}`} width={width} height={height / measures.length} />
