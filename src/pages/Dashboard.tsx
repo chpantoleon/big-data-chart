@@ -480,7 +480,7 @@ const Dashboard = () => {
         .style('text-anchor', 'middle')
         .style('stroke-width', '1px')
         .attr('font-size', 'smaller')
-        .text(`Error: ${error.error}`)
+        .text(`Error: ${error.error * 100}%`)
         .attr('x', width - margin.left - margin.right - 67)
         .attr('y', margin.top + margin.bottom);
 
