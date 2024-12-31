@@ -40,7 +40,7 @@ const Dashboard = () => {
   const [from, setFrom] = useState<Date>(dayjs(1330144930991).toDate());
   const [to, setTo] = useState<Date>(dayjs(1330244930991).toDate());
   const [height, setHeight] = useState<number>(400);
-  const [width, setWidth] = useState<number>(1000);
+  const [width, setWidth] = useState<number>(0);
   const [accuracy, setAccuracy] = useState<number>(0.95);
 
   const [minDate, setMinDate] = useState<Date | null>(null);
@@ -118,13 +118,18 @@ const Dashboard = () => {
     return list;
   };
 
-  const getTickFormat = (scale: number) => {
-    if (scale < 2500) {
-      return d3.timeFormat('%d-%m-%Y %H:%M'); // Show date and time
-    } else if (scale < 81000000) {
+  const getTickFormat = () => {
+    const range = to.getTime() - from.getTime();
+    console.log("range", range)
+    if (range < 60000) {
+      console.log('less than a minute')
+      return d3.timeFormat('%H:%M:%S.%L'); // Show date and time
+    } else if (range < 86400000) {
+      console.log('less than a day')
       return d3.timeFormat('%H:%M:%S'); // Show time
     } else {
-      return d3.timeFormat('%H:%M:%S.%L'); // Show time with milliseconds
+      console.log('more than a day')
+      return d3.timeFormat('%d-%m-%y'); // Show time with milliseconds
     }
   };
 
@@ -153,12 +158,16 @@ const Dashboard = () => {
   };
 
   const fetchData = async (from: Date, to: Date, metadata: Metadata) => {
-    if (!height || !width) {
-      return;
+    let fromQuery = from.getTime();
+    if (fromQuery < metadata.timeRange.from) {
+      fromQuery = metadata.timeRange.from;
+      setFrom(dayjs(metadata.timeRange.from).toDate());
     }
 
-    if (from.getTime() < metadata.timeRange.from || to.getTime() > metadata.timeRange.to) {
-      return;
+    let toQuery = to.getTime();
+    if (toQuery > metadata.timeRange.to) {
+      toQuery = metadata.timeRange.to;
+      setTo(dayjs(metadata.timeRange.to).toDate());
     }
 
     if (abortControllerRef.current) {
@@ -171,11 +180,12 @@ const Dashboard = () => {
     setLoading(true);
 
     const chartWidth = d3.select('#chart-content').node().getBoundingClientRect().width;
+    setWidth(chartWidth);
 
     const request: Query = {
       query: {
-        from: from,
-        to: to,
+        from: dayjs(fromQuery).toDate(),
+        to: dayjs(toQuery).toDate(),
         measures: measures.map(({ id }) => id),
         viewPort: {
           width: chartWidth - margin.left - margin.right,
@@ -405,7 +415,7 @@ const Dashboard = () => {
       const xAxis = chartPlane
         .append('g')
         .attr('transform', `translate(0, ${chartHeight - margin.bottom})`)
-        .call(d3.axisBottom(x).ticks(7).tickFormat(d3.timeFormat('%d-%m-%Y %H:%M')));
+        .call(d3.axisBottom(x).ticks(7).tickFormat(d3.timeFormat(getTickFormat())));
 
       // Y Axis
       chartPlane
@@ -446,7 +456,13 @@ const Dashboard = () => {
         .zoom()
         .on('zoom', (event: any) => {
           const newX = event.transform.rescaleX(x);
-          xAxis.call(d3.axisBottom(newX).ticks(7).tickFormat(getTickFormat(event.transform.k)));
+          xAxis.call(d3.axisBottom(newX).ticks(7).tickFormat(getTickFormat()));
+          let [start, end] = newX.domain().map((d: any) => dayjs(d.getTime()).toDate());
+
+          // add hard limit on zoom in
+          if (end.getTime()-start.getTime() < 30000) {
+            return
+          }
 
           path.attr(
             'd',
@@ -466,7 +482,13 @@ const Dashboard = () => {
         })
         .on('end', (event: any) => {
           const newX = event.transform.rescaleX(x);
-          const [start, end] = newX.domain().map((d: any) => dayjs(d.getTime()).toDate());
+          let [start, end] = newX.domain().map((d: any) => dayjs(d.getTime()).toDate());
+
+          // add hard limit on zoom in
+          if (end.getTime()-start.getTime() < 30000) {
+            return
+          }
+
           setFrom(start);
           setTo(end);
           fetchData(start, end, metadata!);
