@@ -1,4 +1,4 @@
-import { MouseEvent, SyntheticEvent, useEffect, useState, useRef, Fragment } from 'react';
+import { MouseEvent, SyntheticEvent, useEffect, useState, useRef, Fragment, useMemo } from 'react';
 import * as d3 from 'd3';
 import Box from '@mui/material/Box';
 import Slider from '@mui/material/Slider';
@@ -22,11 +22,17 @@ import RemoveIcon from '@mui/icons-material/Remove';
 import AddIcon from '@mui/icons-material/Add';
 import CardContent from '@mui/material/CardContent';
 import Switch from '@mui/material/Switch';
+import { useDebouncedCallback } from 'use-debounce';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import FormGroup from '@mui/material/FormGroup';
+import Toolbar from '@mui/material/Toolbar';
+import OpenInFullIcon from '@mui/icons-material/OpenInFull';
+import CloseIcon from '@mui/icons-material/Close';
+import Dialog from '@mui/material/Dialog';
 
 import { Measure, Metadata, metadataDtoToDomain } from '../interfaces/metadata';
 import { ErrorDto, QueryResultsDto } from '../interfaces/data';
 import { Query, queryToQueryDto } from '../interfaces/query';
-import { FormControlLabel, FormGroup, Toolbar } from '@mui/material';
 
 const Dashboard = () => {
   const [loading, setLoading] = useState<boolean>(false);
@@ -52,12 +58,16 @@ const Dashboard = () => {
   const [metadata, setMetadata] = useState<Metadata>();
   const [queryResults, setQueryResults] = useState<QueryResultsDto>();
 
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const margin = { top: 20, right: 0, bottom: 20, left: 40 };
   const min = 0;
   const max = 1;
   const step = 0.05;
+
+  const clearMeasures = () => setMeasures([]);
 
   const pixelArrayToCooordinates = (pixelArray: string[][]): { x: number; y: number }[] =>
     pixelArray
@@ -160,13 +170,15 @@ const Dashboard = () => {
 
     setLoading(true);
 
+    const chartWidth = d3.select('#chart-content').node().getBoundingClientRect().width;
+
     const request: Query = {
       query: {
         from: from,
         to: to,
         measures: measures.map(({ id }) => id),
         viewPort: {
-          width: width - margin.left - margin.right,
+          width: chartWidth - margin.left - margin.right,
           height: height / measures.length - margin.bottom - margin.top,
         },
         accuracy: accuracy,
@@ -199,8 +211,6 @@ const Dashboard = () => {
       setLoading(false);
     }
   };
-
-  const clearMeasures = () => setMeasures([]);
 
   const handleDatasourceChange = (event: MouseEvent<HTMLElement>, datasource: string) => {
     setDatasource(datasource);
@@ -253,6 +263,11 @@ const Dashboard = () => {
     }
   };
 
+  const debouncedFetchData = useDebouncedCallback(
+    (from, to, metadata) => fetchData(from, to, metadata!),
+    100
+  );
+
   const addCircle = (
     { x, y }: { x: number; y: number },
     color: string,
@@ -265,7 +280,7 @@ const Dashboard = () => {
       .append('circle')
       .attr('cx', x + margin.left + margin.right)
       .attr('cy', containerHeight - y)
-      .attr('r', '1px')
+      .attr('r', '0.05px')
       .style('fill', `${color}`);
 
     circle
@@ -321,7 +336,6 @@ const Dashboard = () => {
     let chartHeight = height / measures.length;
 
     const containerWidth = width - margin.left - margin.right;
-    const containerHeight = chartHeight - margin.top - margin.bottom;
 
     series.map((data, index) => {
       const svg = d3.select(`#svg${index}`);
@@ -462,6 +476,13 @@ const Dashboard = () => {
     });
   }, [queryResults, metadata, height, isFalsePixelsVisible, isMissingPixelsVisible]);
 
+  useEffect(() => {
+    d3.select(window).on('resize', function () {
+      const container = d3.select('#chart-content');
+      setWidth(container.node().getBoundingClientRect().width);
+    });
+  }, []);
+
   // render error pixels
   useEffect(() => {
     if (!queryResults || !measures) return;
@@ -528,7 +549,7 @@ const Dashboard = () => {
       return;
     }
 
-    fetchData(from, to, metadata);
+    debouncedFetchData(from, to, metadata);
   }, [from, to, metadata, measures, height, width, schema, table, accuracy]);
 
   return (
@@ -748,7 +769,7 @@ const Dashboard = () => {
           <Grid size={9}>
             {!measures.length ? (
               <Card variant="outlined">
-                <CardContent>
+                <CardContent id="chart-content">
                   <Typography sx={{ color: 'text.secondary', fontSize: 14, textAlign: 'center' }}>
                     Select at least one measure to display
                   </Typography>
@@ -756,7 +777,7 @@ const Dashboard = () => {
               </Card>
             ) : !queryResults ? (
               <Card variant="outlined">
-                <CardContent>
+                <CardContent id="chart-content">
                   <Typography sx={{ color: 'text.secondary', fontSize: 14, textAlign: 'center' }}>
                     No data
                   </Typography>
@@ -766,12 +787,24 @@ const Dashboard = () => {
               <Card variant="outlined">
                 <CardContent>
                   {Object.values(queryResults.data).map((_, index) => (
-                    <Fragment key={`svg${index}`}>
-                      <Typography variant="body1" sx={{ color: 'text.secondary', fontSize: 14 }}>
-                        {measures[index]?.name}
-                      </Typography>
+                    <Box key={`svg${index}`} id="chart-content">
+                      <Box
+                        display="flex"
+                        flexDirection={'row'}
+                        flexWrap={'nowrap'}
+                        alignContent={'center'}
+                        alignItems={'center'}
+                        justifyContent={'space-between'}
+                      >
+                        <Typography variant="body1" sx={{ color: 'text.secondary', fontSize: 14 }}>
+                          {measures[index]?.name}
+                        </Typography>
+                        <IconButton size="small" onClick={() => setIsModalOpen(true)}>
+                          <OpenInFullIcon fontSize={'small'} />
+                        </IconButton>
+                      </Box>
                       <svg id={`svg${index}`} width={width} height={height / measures.length} />
-                    </Fragment>
+                    </Box>
                   ))}
                 </CardContent>
               </Card>
@@ -779,6 +812,27 @@ const Dashboard = () => {
           </Grid>
         </Grid>
       </Box>
+      <Dialog
+        open={isModalOpen}
+        fullWidth
+        maxWidth="xl" // Adjust as needed
+        PaperProps={{
+          style: { height: '90vh', overflow: 'hidden' },
+        }}
+      >
+        <Box>
+          <Box display={'flex'} alignItems={'flex-end'}>
+            <IconButton
+              size="small"
+              onClick={() => setIsModalOpen(false)}
+              style={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}
+            >
+              <CloseIcon fontSize={'small'} />
+            </IconButton>
+          </Box>
+          <svg id={`svg0`} width={width} height={height / measures.length} />
+        </Box>
+      </Dialog>
     </Box>
   );
 };
