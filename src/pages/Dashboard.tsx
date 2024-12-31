@@ -41,6 +41,8 @@ const Dashboard = () => {
   const [to, setTo] = useState<Date>(dayjs(1330244930991).toDate());
   const [height, setHeight] = useState<number>(400);
   const [width, setWidth] = useState<number>(0);
+  const [modalHeight, setModalHeight] = useState<number>(400);
+  const [modalWidth, setModalWidth] = useState<number>(0);
   const [accuracy, setAccuracy] = useState<number>(0.95);
 
   const [minDate, setMinDate] = useState<Date | null>(null);
@@ -59,6 +61,7 @@ const Dashboard = () => {
   const [queryResults, setQueryResults] = useState<QueryResultsDto>();
 
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [selectedChart, setSelectedChart] = useState<number | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -120,15 +123,11 @@ const Dashboard = () => {
 
   const getTickFormat = () => {
     const range = to.getTime() - from.getTime();
-    console.log("range", range)
     if (range < 60000) {
-      console.log('less than a minute')
       return d3.timeFormat('%H:%M:%S.%L'); // Show date and time
     } else if (range < 86400000) {
-      console.log('less than a day')
       return d3.timeFormat('%H:%M:%S'); // Show time
     } else {
-      console.log('more than a day')
       return d3.timeFormat('%d-%m-%y'); // Show time with milliseconds
     }
   };
@@ -179,8 +178,18 @@ const Dashboard = () => {
 
     setLoading(true);
 
-    const chartWidth = d3.select('#chart-content').node().getBoundingClientRect().width;
-    setWidth(chartWidth);
+    let chartWidth;
+    let chartHeight = height;
+    if (isModalOpen) {
+      chartWidth = d3.select('#chart-content-modal').node().getBoundingClientRect().width;
+      chartHeight = d3.select('#chart-content-modal').node().getBoundingClientRect().height;
+
+      setModalWidth(chartWidth);
+      setModalHeight(chartHeight);
+    } else {
+      chartWidth = d3.select('#chart-content').node().getBoundingClientRect().width;
+      setWidth(chartWidth);
+    }
 
     const request: Query = {
       query: {
@@ -189,7 +198,7 @@ const Dashboard = () => {
         measures: measures.map(({ id }) => id),
         viewPort: {
           width: chartWidth - margin.left - margin.right,
-          height: height / measures.length - margin.bottom - margin.top,
+          height: chartHeight / measures.length - margin.bottom - margin.top,
         },
         accuracy: accuracy,
       },
@@ -290,7 +299,7 @@ const Dashboard = () => {
       .append('circle')
       .attr('cx', x + margin.left + margin.right)
       .attr('cy', containerHeight - y)
-      .attr('r', '0.05px')
+      .attr('r', '0.5px')
       .style('fill', `${color}`);
 
     circle
@@ -328,7 +337,7 @@ const Dashboard = () => {
 
   // reset zoom
   useEffect(() => {
-    if (!queryResults) return;
+    if (!queryResults || selectedChart !== null) return;
 
     const series = Object.values(queryResults!.data);
     series.map((_, index) => {
@@ -337,9 +346,17 @@ const Dashboard = () => {
     });
   }, [queryResults]);
 
+  // reset zoom in modal
+  useEffect(() => {
+    if (!queryResults || selectedChart === null) return;
+
+    const svg = d3.select(`#svg${selectedChart}-modal`);
+    svg.call(d3.zoom().transform, d3.zoomIdentity);
+  }, [queryResults]);
+
   // render chart
   useEffect(() => {
-    if (!queryResults) return;
+    if (!queryResults || selectedChart !== null) return;
 
     const series = Object.values(queryResults.data);
 
@@ -460,8 +477,8 @@ const Dashboard = () => {
           let [start, end] = newX.domain().map((d: any) => dayjs(d.getTime()).toDate());
 
           // add hard limit on zoom in
-          if (end.getTime()-start.getTime() < 30000) {
-            return
+          if (end.getTime() - start.getTime() < 30000) {
+            return;
           }
 
           path.attr(
@@ -485,8 +502,8 @@ const Dashboard = () => {
           let [start, end] = newX.domain().map((d: any) => dayjs(d.getTime()).toDate());
 
           // add hard limit on zoom in
-          if (end.getTime()-start.getTime() < 30000) {
-            return
+          if (end.getTime() - start.getTime() < 30000) {
+            return;
           }
 
           setFrom(start);
@@ -498,16 +515,182 @@ const Dashboard = () => {
     });
   }, [queryResults, metadata, height, isFalsePixelsVisible, isMissingPixelsVisible]);
 
+  // render chart in modal
+  useEffect(() => {
+    if (!queryResults || selectedChart === null) return;
+
+    const containerWidth = modalWidth - margin.left - margin.right;
+    const svg = d3.select(`#svg${selectedChart}-modal`);
+    svg.selectAll('*').remove(); // Clear previous render
+
+    const chartPlane = svg.append('g');
+    // Convert x to Date from timestamp
+    const formattedData = queryResults.data[selectedChart].map(
+      (d) => [new Date(d.timestamp), d.value] as [Date, number]
+    );
+
+    // Set up scales
+    const minTs = d3.min(formattedData, (d: any) => d[0]) as Date;
+    const maxTs = d3.max(formattedData, (d: any) => d[0]) as Date;
+    const x = d3
+      .scaleTime()
+      .domain([minTs, maxTs])
+      .range([margin.left, modalWidth - margin.right]);
+
+    const minValue = d3.min(formattedData, (d: any) => d[1]);
+    const maxValue = d3.max(formattedData, (d: any) => d[1]);
+    const y = d3
+      .scaleLinear()
+      .domain([minValue, maxValue])
+      .range([modalHeight - margin.bottom, margin.top]);
+
+    // Function to add X gridlines
+    const makeXGridlines = () => d3.axisBottom(x);
+
+    // Function to add Y gridlines
+    const makeYGridlines = () =>
+      d3
+        .axisLeft(y)
+        .ticks(7)
+        .tickValues([...y.ticks(7), y.domain()[1]]);
+
+    // Add X gridlines
+    chartPlane
+      .append('g')
+      .attr('class', 'grid')
+      .attr('transform', `translate(0, ${modalHeight})`)
+      .call(
+        makeXGridlines()
+          .tickSize(-modalHeight + margin.top) // Extend lines down to the bottom
+          .tickFormat(() => '') // No tick labels
+      );
+
+    // Add Y gridlines
+    chartPlane
+      .append('g')
+      .attr('class', 'grid')
+      .attr('transform', `translate(${margin.left}, 0)`)
+      .call(
+        makeYGridlines()
+          .tickSize(-containerWidth) // Extend lines across the width
+          .tickFormat(() => '') // No tick labels
+      );
+
+    // Apply basic styles for the gridlines
+    svg
+      .selectAll('.grid line')
+      .style('stroke', '#e0e0e0')
+      .style('stroke-opacity', 0.7)
+      .style('shape-rendering', 'crispEdges');
+
+    svg.selectAll('.grid path').style('stroke-width', 0);
+
+    // X Axis
+    const xAxis = chartPlane
+      .append('g')
+      .attr('transform', `translate(0, ${modalHeight - margin.bottom})`)
+      .call(d3.axisBottom(x).ticks(7).tickFormat(d3.timeFormat(getTickFormat())));
+
+    // Y Axis
+    chartPlane
+      .append('g')
+      .attr('transform', `translate(${margin.left}, 0)`)
+      .call(d3.axisLeft(y).ticks(7));
+
+    chartPlane
+      .append('g')
+      .selectAll('rect')
+      .data(formattedData)
+      .enter()
+      .append('rect')
+      .attr('class', 'point')
+      .attr('x', (d: any) => x(d[0]))
+      .attr('y', (d: any) => y(d[1]))
+      .attr('width', 1)
+      .attr('height', 1)
+      .attr('fill', 'steelblue');
+
+    // Add path
+    const line = d3
+      .line()
+      .x((d: any) => x(d[0]))
+      .y((d: any) => y(d[1]))
+      .curve(d3.curveMonotoneX);
+
+    const path = chartPlane
+      .append('path')
+      .attr('class', 'path')
+      .datum(formattedData)
+      .attr('fill', 'none')
+      .attr('stroke', 'steelblue')
+      .attr('stroke-width', 1)
+      .attr('d', line);
+
+    const zoom = d3
+      .zoom()
+      .on('zoom', (event: any) => {
+        const newX = event.transform.rescaleX(x);
+        xAxis.call(d3.axisBottom(newX).ticks(7).tickFormat(getTickFormat()));
+        let [start, end] = newX.domain().map((d: any) => dayjs(d.getTime()).toDate());
+
+        // add hard limit on zoom in
+        if (end.getTime() - start.getTime() < 30000) {
+          return;
+        }
+
+        path.attr(
+          'd',
+          d3
+            .line()
+            .x((d: any) => newX(d[0]))
+            .y((d: any) => y(d[1]))
+            .curve(d3.curveMonotoneX)
+        );
+
+        chartPlane
+          .selectAll('.point')
+          .attr('x', (d: any) => newX(d[0]))
+          .attr('y', (d: any) => y(d[1]));
+
+        svg.selectAll('circle').remove();
+      })
+      .on('end', (event: any) => {
+        const newX = event.transform.rescaleX(x);
+        let [start, end] = newX.domain().map((d: any) => dayjs(d.getTime()).toDate());
+
+        // add hard limit on zoom in
+        if (end.getTime() - start.getTime() < 30000) {
+          return;
+        }
+
+        setFrom(start);
+        setTo(end);
+        fetchData(start, end, metadata!);
+      });
+
+    svg.call(zoom);
+  }, [
+    queryResults,
+    metadata,
+    modalHeight,
+    isFalsePixelsVisible,
+    isMissingPixelsVisible,
+    selectedChart,
+  ]);
+
+  // add resize handler for charts
   useEffect(() => {
     d3.select(window).on('resize', function () {
-      const container = d3.select('#chart-content');
-      setWidth(container.node().getBoundingClientRect().width);
+      setWidth(d3.select('#chart-content').node().getBoundingClientRect().width);
+
+      setModalWidth(d3.select('#chart-content-modal').node().getBoundingClientRect().width);
+      setModalHeight(d3.select('#chart-content-modal').node().getBoundingClientRect().height);
     });
   }, []);
 
   // render error pixels
   useEffect(() => {
-    if (!queryResults || !measures) return;
+    if (!queryResults || !measures || selectedChart !== null) return;
 
     const errors = Object.values(queryResults.error);
 
@@ -560,6 +743,57 @@ const Dashboard = () => {
     });
   }, [queryResults, metadata, height, isFalsePixelsVisible, isMissingPixelsVisible]);
 
+  // render error pixels in modal
+  useEffect(() => {
+    if (!queryResults || !measures || selectedChart === null) return;
+
+    const error = queryResults.error[selectedChart];
+
+    const containerHeight = modalHeight - margin.top;
+    const svg = d3.select(`#svg${selectedChart}-modal > g`);
+
+    if (isFalsePixelsVisible) {
+      pixelArrayToCooordinates(error.falsePixels).map(
+        ({ x, y }: { x: number; y: number }, index: number) => {
+          addCircle({ x, y }, 'red', containerHeight, svg);
+        }
+      );
+    }
+
+    if (isMissingPixelsVisible) {
+      pixelArrayToCooordinates(error.missingPixels).map(
+        ({ x, y }: { x: number; y: number }, index: number) => {
+          addCircle({ x, y }, 'orange', containerHeight, svg);
+        }
+      );
+    }
+
+    const tooltipGroup = svg.append('g').attr('class', 'info-group');
+    const text = tooltipGroup
+      .append('text')
+      .attr('class', 'info')
+      .style('text-anchor', 'middle')
+      .style('stroke-width', '1px')
+      .attr('font-size', 'smaller')
+      .text(`Error: ${error.error * 100}%`)
+      .attr('x', modalWidth - margin.left - margin.right - 67)
+      .attr('y', margin.top + margin.bottom);
+
+    const bbox = text.node()?.getBBox();
+
+    if (!bbox) return;
+
+    tooltipGroup
+      .insert('rect', 'text')
+      .attr('x', bbox.x - 10)
+      .attr('y', bbox.y - 5)
+      .attr('width', bbox.width + 20)
+      .attr('height', bbox.height + 10)
+      .style('fill', 'lightgrey')
+      .style('stroke', 'black')
+      .style('stroke-width', '1px');
+  }, [queryResults, metadata, height, isFalsePixelsVisible, isMissingPixelsVisible]);
+
   // fetch metadata
   useEffect(() => {
     fetchMetadata();
@@ -572,7 +806,7 @@ const Dashboard = () => {
     }
 
     debouncedFetchData(from, to, metadata);
-  }, [from, to, metadata, measures, height, width, schema, table, accuracy]);
+  }, [from, to, metadata, measures, height, width, schema, table, accuracy, selectedChart]);
 
   return (
     <Box sx={{ flexGrow: 1 }}>
@@ -821,7 +1055,13 @@ const Dashboard = () => {
                         <Typography variant="body1" sx={{ color: 'text.secondary', fontSize: 14 }}>
                           {measures[index]?.name}
                         </Typography>
-                        <IconButton size="small" onClick={() => setIsModalOpen(true)}>
+                        <IconButton
+                          size="small"
+                          onClick={() => {
+                            setSelectedChart(measures[index]?.id);
+                            setIsModalOpen(true);
+                          }}
+                        >
                           <OpenInFullIcon fontSize={'small'} />
                         </IconButton>
                       </Box>
@@ -834,6 +1074,7 @@ const Dashboard = () => {
           </Grid>
         </Grid>
       </Box>
+
       <Dialog
         open={isModalOpen}
         fullWidth
@@ -842,17 +1083,28 @@ const Dashboard = () => {
           style: { height: '90vh', overflow: 'hidden' },
         }}
       >
-        <Box>
+        <Box sx={{ width: '100%', height: '100%', p: 2}}>
           <Box display={'flex'} alignItems={'flex-end'}>
+            {selectedChart !== null && (
+              <Typography
+                style={{ position: 'absolute', top: 8, left: 8, zIndex: 1 }}
+                variant="body1"
+              >{measures[selectedChart]?.name}</Typography>
+            )}
             <IconButton
               size="small"
-              onClick={() => setIsModalOpen(false)}
+              onClick={() => {
+                setSelectedChart(null);
+                setIsModalOpen(false);
+              }}
               style={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}
             >
               <CloseIcon fontSize={'small'} />
             </IconButton>
           </Box>
-          <svg id={`svg0`} width={width} height={height / measures.length} />
+          <Box sx={{ width: '100%', height: '100%' }} id="chart-content-modal">
+          <svg id={`svg${selectedChart}-modal`} width={modalWidth} height={modalHeight} />
+          </Box>
         </Box>
       </Dialog>
     </Box>
