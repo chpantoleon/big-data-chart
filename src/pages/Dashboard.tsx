@@ -50,7 +50,7 @@ const Dashboard = () => {
 
   const margin = { top: 20, right: 0, bottom: 20, left: 40 };
   const min = 0;
-  const max = 0.95;
+  const max = 1;
   const step = 0.05;
 
   const pixelArrayToCooordinates = (pixelArray: string[][]): { x: number; y: number }[] =>
@@ -530,6 +530,7 @@ const Dashboard = () => {
                   <Grid size={12}>
                     <DateTimePicker
                       label="From"
+                      maxDate={dayjs(to)}
                       disabled={loading}
                       value={dayjs(from)}
                       slotProps={{ textField: { size: 'small', fullWidth: true } }}
@@ -543,6 +544,7 @@ const Dashboard = () => {
                   <Grid size={12}>
                     <DateTimePicker
                       label="To"
+                      minDateTime={dayjs(from)}
                       disabled={loading}
                       value={dayjs(to)}
                       slotProps={{ textField: { size: 'small', fullWidth: true } }}
@@ -581,10 +583,10 @@ const Dashboard = () => {
                           onChange={handleAccuracyChange}
                           value={accuracy}
                           disabled={loading}
-                          min={0}
-                          max={0.95}
-                          step={0.05}
-                          shiftStep={0.05}
+                          min={min}
+                          max={max}
+                          step={step}
+                          shiftStep={step}
                           aria-label="Accuracy"
                           valueLabelDisplay="auto"
                         />
