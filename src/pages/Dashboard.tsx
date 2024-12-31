@@ -7,7 +7,6 @@ import Select, { SelectChangeEvent } from '@mui/material/Select';
 import Grid from '@mui/material/Grid2';
 import Typography from '@mui/material/Typography';
 import apiService from 'api/apiService';
-import { useDebouncedCallback } from 'use-debounce';
 import axios from 'axios';
 import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
@@ -37,6 +36,9 @@ const Dashboard = () => {
   const [height, setHeight] = useState<number>(400);
   const [width, setWidth] = useState<number>(1000);
   const [accuracy, setAccuracy] = useState<number>(0.95);
+
+  const [minDate, setMinDate] = useState<Date | null>(null);
+  const [maxDate, setMaxDate] = useState<Date | null>(null);
 
   const [isFalsePixelsVisible, setIsFalsePixelsVisible] = useState<boolean>(true);
   const [isMissingPixelsVisible, setIsMissingPixelsVisible] = useState<boolean>(true);
@@ -121,7 +123,12 @@ const Dashboard = () => {
     try {
       const response = await apiService.getMetadata(datasource, schema, table);
 
-      setMetadata(metadataDtoToDomain(response.data));
+      const metadata = metadataDtoToDomain(response.data);
+      setMetadata(metadata);
+      setMinDate(dayjs(metadata.timeRange.from).toDate());
+      setMaxDate(dayjs(metadata.timeRange.to).toDate());
+      setFrom(dayjs(metadata.timeRange.from).toDate());
+      setTo(dayjs(metadata.timeRange.from).add(12, 'h').toDate());
     } catch (error) {
       console.error(error);
       if (axios.isCancel(error)) {
@@ -193,16 +200,21 @@ const Dashboard = () => {
     }
   };
 
+  const clearMeasures = () => setMeasures([]);
+
   const handleDatasourceChange = (event: MouseEvent<HTMLElement>, datasource: string) => {
     setDatasource(datasource);
+    clearMeasures();
   };
 
   const handleSchemaChange = (event: MouseEvent<HTMLElement>, schema: string) => {
     setSchema(schema);
+    clearMeasures();
   };
 
   const handleTableChange = (event: MouseEvent<HTMLElement>, table: string) => {
     setTable(table);
+    clearMeasures();
   };
 
   const handleSelectMeasures = (event: SelectChangeEvent<string[]>) => {
@@ -240,11 +252,6 @@ const Dashboard = () => {
       setAccuracy(value);
     }
   };
-
-  const debouncedFetchData = useDebouncedCallback(
-    (from, to, metadata) => fetchData(from, to, metadata!),
-    100
-  );
 
   const addCircle = (
     { x, y }: { x: number; y: number },
@@ -457,7 +464,7 @@ const Dashboard = () => {
 
   // render error pixels
   useEffect(() => {
-    if (!queryResults) return;
+    if (!queryResults || !measures) return;
 
     const errors = Object.values(queryResults.error);
 
@@ -494,7 +501,9 @@ const Dashboard = () => {
         .attr('x', width - margin.left - margin.right - 67)
         .attr('y', margin.top + margin.bottom);
 
-      const bbox = text.node().getBBox();
+      const bbox = text.node()?.getBBox();
+
+      if (!bbox) return;
 
       tooltipGroup
         .insert('rect', 'text')
@@ -518,7 +527,8 @@ const Dashboard = () => {
     if (!metadata || !from || !to || !measures.length) {
       return;
     }
-    debouncedFetchData(from, to, metadata);
+
+    fetchData(from, to, metadata);
   }, [from, to, metadata, measures, height, width, schema, table, accuracy]);
 
   return (
@@ -540,7 +550,8 @@ const Dashboard = () => {
                   <Grid size={12}>
                     <DateTimePicker
                       label="From"
-                      maxDate={dayjs(to)}
+                      minDateTime={dayjs(minDate)}
+                      maxDateTime={dayjs(to)}
                       disabled={loading}
                       value={dayjs(from)}
                       slotProps={{ textField: { size: 'small', fullWidth: true } }}
@@ -555,6 +566,7 @@ const Dashboard = () => {
                     <DateTimePicker
                       label="To"
                       minDateTime={dayjs(from)}
+                      maxDateTime={dayjs(maxDate)}
                       disabled={loading}
                       value={dayjs(to)}
                       slotProps={{ textField: { size: 'small', fullWidth: true } }}
