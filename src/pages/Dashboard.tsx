@@ -34,6 +34,8 @@ import { Measure, Metadata, metadataDtoToDomain } from '../interfaces/metadata';
 import { ErrorDto, QueryResultsDto } from '../interfaces/data';
 import { Query, queryToQueryDto } from '../interfaces/query';
 
+const round = (num: number): number => Math.round((num + Number.EPSILON) * 100) / 100
+
 const Dashboard = () => {
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -180,6 +182,7 @@ const Dashboard = () => {
 
     let chartWidth;
     let chartHeight = height;
+
     if (isModalOpen) {
       chartWidth = d3.select('#chart-content-modal').node().getBoundingClientRect().width;
       chartHeight = d3.select('#chart-content-modal').node().getBoundingClientRect().height;
@@ -681,10 +684,14 @@ const Dashboard = () => {
   // add resize handler for charts
   useEffect(() => {
     d3.select(window).on('resize', function () {
-      setWidth(d3.select('#chart-content').node().getBoundingClientRect().width);
+      if (d3.select('#chart-content').node()) {
+        setWidth(d3.select('#chart-content').node().getBoundingClientRect().width);
+      }
 
-      setModalWidth(d3.select('#chart-content-modal').node().getBoundingClientRect().width);
-      setModalHeight(d3.select('#chart-content-modal').node().getBoundingClientRect().height);
+      if (d3.select('#chart-content-modal').node()) {
+        setModalWidth(d3.select('#chart-content-modal').node().getBoundingClientRect().width);
+        setModalHeight(d3.select('#chart-content-modal').node().getBoundingClientRect().height);
+      }
     });
   }, []);
 
@@ -723,8 +730,8 @@ const Dashboard = () => {
         .style('text-anchor', 'middle')
         .style('stroke-width', '1px')
         .attr('font-size', 'smaller')
-        .text(`Error: ${error.error * 100}%`)
-        .attr('x', width - margin.left - margin.right - 67)
+        .text(`Error: ${round(error.error * 100)}%`)
+        .attr('x', width - margin.left - margin.right - 10)
         .attr('y', margin.top + margin.bottom);
 
       const bbox = text.node()?.getBBox();
@@ -775,8 +782,8 @@ const Dashboard = () => {
       .style('text-anchor', 'middle')
       .style('stroke-width', '1px')
       .attr('font-size', 'smaller')
-      .text(`Error: ${error.error * 100}%`)
-      .attr('x', modalWidth - margin.left - margin.right - 67)
+      .text(`Error: ${round(error.error * 100)}%`)
+      .attr('x', modalWidth - margin.left - margin.right - 40)
       .attr('y', margin.top + margin.bottom);
 
     const bbox = text.node()?.getBBox();
