@@ -2,7 +2,7 @@ import React from 'react'
 import { createBrowserRouter } from 'react-router-dom';
 
 import ProtectedRoute from './ProtectedRoute';
-import Dashboard from 'pages/Dashboard';
+import CustomDashboard from 'pages/CustomDashboard';
 
 const LoginPage = React.lazy(() => import('pages/Login'))
 
@@ -18,7 +18,7 @@ const router = createBrowserRouter(
       children: [
         {
           path: '/',
-          element: <Dashboard />
+          element: <CustomDashboard />
         },
       ],
     },

@@ -404,7 +404,7 @@ const Dashboard = () => {
       chartPlane
         .append('g')
         .attr('class', 'grid')
-        .attr('transform', `translate(0, ${chartHeight})`)
+        .attr('transform', `translate(0, ${chartHeight - margin.bottom})`)
         .call(
           makeXGridlines()
             .tickSize(-height / measures.length + margin.top) // Extend lines down to the bottom
@@ -561,7 +561,7 @@ const Dashboard = () => {
     chartPlane
       .append('g')
       .attr('class', 'grid')
-      .attr('transform', `translate(0, ${modalHeight})`)
+      .attr('transform', `translate(0, ${modalHeight - margin.bottom})`)
       .call(
         makeXGridlines()
           .tickSize(-modalHeight + margin.top) // Extend lines down to the bottom
