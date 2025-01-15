@@ -57,7 +57,7 @@ const Dashboard = () => {
 
   const [datasource, setDatasource] = useState<string>('influx');
   const [schema, setSchema] = useState<string>('more');
-  const [table, setTable] = useState<string>('intel_lab_exp');
+  const [table, setTable] = useState<string>('manufacturing_exp');
 
   const [metadata, setMetadata] = useState<Metadata>();
   const [queryResults, setQueryResults] = useState<QueryResultsDto>();
@@ -184,13 +184,12 @@ const Dashboard = () => {
     let chartHeight = height;
 
     if (isModalOpen) {
-      chartWidth = d3.select('#chart-content-modal').node().getBoundingClientRect().width;
-      chartHeight = d3.select('#chart-content-modal').node().getBoundingClientRect().height;
-
+      chartWidth = Math.floor(d3.select('#chart-content-modal').node().getBoundingClientRect().width);
+      chartHeight = Math.floor(d3.select('#chart-content-modal').node().getBoundingClientRect().height);
       setModalWidth(chartWidth);
       setModalHeight(chartHeight);
     } else {
-      chartWidth = d3.select('#chart-content').node().getBoundingClientRect().width;
+      chartWidth = Math.floor(d3.select('#chart-content').node().getBoundingClientRect().width);
       setWidth(chartWidth);
     }
 
@@ -296,17 +295,22 @@ const Dashboard = () => {
     containerHeight: number,
     svg: any
   ) => {
-    const cx = x + margin.left + margin.right;
-    const cy = containerHeight - y;
+    const cx = x + margin.left + 0.5;
+    const cy = containerHeight - y ;
+
     const circle = svg
-      .append('circle')
-      .attr('cx', x + margin.left + margin.right)
-      .attr('cy', containerHeight - y)
-      .attr('r', '0.5px')
+      .append('rect')
+      .attr('x', cx)
+      .attr('y', cy)
+      .attr('width', 1)
+      .attr('height', 1)
+      .attr('stroke', 'black') // Add border
+      .attr('stroke-width', 0.1) // Thin border
       .style('fill', `${color}`);
 
     circle
-      .on('mouseover', (elem: SVGCircleElement) => {
+      .on('mouseover', (elem: SVGRectElement) => {
+        // circle.style('opacity', 0);
         const tooltipGroup = svg.append('g').attr('class', 'tooltip-group');
         const horizontalOffset = cx > 900 ? -50 : 0;
         const verticalOffset = cy < 25 ? 50 : -15;
@@ -376,20 +380,30 @@ const Dashboard = () => {
       const formattedData = data.map((d) => [new Date(d.timestamp), d.value] as [Date, number]);
 
       // Set up scales
-      const minTs = d3.min(formattedData, (d: any) => d[0]) as Date;
-      const maxTs = d3.max(formattedData, (d: any) => d[0]) as Date;
+      // const minTs = d3.min(formattedData, (d: any) => d[0]) as Date;
+      // const maxTs = d3.max(formattedData, (d: any) => d[0]) as Date;
+      const minTs = new Date(Math.max(d3.min(formattedData, (d: any) => d[0].getTime()) as number, from.getTime()));
+      const maxTs = new Date(Math.min(d3.max(formattedData, (d: any) => d[0].getTime()) as number, to.getTime()));
+      
+      // Start from a pixel right of the axis
+      // End at the right edge
       const x = d3
         .scaleTime()
         .domain([minTs, maxTs])
-        .range([margin.left, width - margin.right]);
-
+        .range([margin.left + 1, Math.floor(width - margin.right)]); // Floor the width to avoid blurry lines
+      
+      // Start from a pixel right of the axis
+      // End at the right edge
       const minValue = d3.min(formattedData, (d: any) => d[1]);
       const maxValue = d3.max(formattedData, (d: any) => d[1]);
-      const y = d3
-        .scaleLinear()
-        .domain([minValue, maxValue])
-        .range([chartHeight - margin.bottom, margin.top]);
 
+      // Start a pixel above the bottom axis
+      // End at the top edge
+      const y = d3
+          .scaleLinear()
+          .domain([minValue, maxValue])
+          .range([Math.floor(chartHeight - margin.bottom) - 1, margin.top]); // Floor the height to avoid blurry lines
+      
       // Function to add X gridlines
       const makeXGridlines = () => d3.axisBottom(x);
 
@@ -404,7 +418,7 @@ const Dashboard = () => {
       chartPlane
         .append('g')
         .attr('class', 'grid')
-        .attr('transform', `translate(0, ${chartHeight - margin.bottom})`)
+        .attr('transform', `translate(0, ${chartHeight})`)
         .call(
           makeXGridlines()
             .tickSize(-height / measures.length + margin.top) // Extend lines down to the bottom
@@ -443,35 +457,73 @@ const Dashboard = () => {
         .attr('transform', `translate(${margin.left}, 0)`)
         .call(d3.axisLeft(y).ticks(7));
 
-      chartPlane
-        .append('g')
-        .selectAll('rect')
-        .data(formattedData)
-        .enter()
-        .append('rect')
-        .attr('class', 'point')
-        .attr('x', (d: any) => x(d[0]))
-        .attr('y', (d: any) => y(d[1]))
-        .attr('width', 1)
-        .attr('height', 1)
-        .attr('fill', 'steelblue');
+      // chartPlane
+      //   .append('g')
+      //   .selectAll('rect')
+      //   .data(formattedData)
+      //   .enter()
+      //   .append('rect')
+      //   .attr('class', 'point')
+      //   .attr('x', (d: any) => x(d[0]))
+      //   .attr('y', (d: any) => y(d[1]))
+      //   .attr('width', 1  / window.devicePixelRatio)
+      //   .attr('height', 1  / window.devicePixelRatio ) 
+      //   .attr('fill', 'steelblue');
 
-      // Add path
-      const line = d3
-        .line()
-        .x((d: any) => x(d[0]))
-        .y((d: any) => y(d[1]))
-        .curve(d3.curveMonotoneX);
+          // // Add path
+    //    const line = d3
+    //    .line()
+    //    .x((d: any) => x(d[0]))
+    //    .y((d: any) => y(d[1]))
+    //    .curve(d3.curveLinear);
 
-      const path = chartPlane
-        .append('path')
-        .attr('class', 'path')
-        .datum(formattedData)
-        .attr('fill', 'none')
-        .attr('stroke', 'steelblue')
-        .attr('stroke-width', 1)
-        .attr('d', line);
+    //  const path = chartPlane
+    //    .append('path')
+    //    .attr('class', 'path')
+    //    .datum(formattedData)
+    //    .attr('fill', 'none')
+    //    .attr('stroke', 'steelblue')
+    //    .attr('stroke-width', 1)
+    //    .attr('d', line);
 
+      // Add data points as small rectangles (1x1 pixels)
+      // formattedData.forEach(d => {
+      //   chartPlane.append('rect')
+      //     .attr('x', (x(d[0])) - 0.5) // Center the rectangle on the x coordinate
+      //     .attr('y', (y(d[1])) - 0.5) // Center the rectangle on the y coordinate
+      //     .attr('width', 1 )
+      //     .attr('height', 1)
+      //     .style('shape-rendering', 'crispEdges')
+      //     .attr('fill', 'steelblue');
+      // });
+
+      // // Append line segments to chartPlane
+      // formattedData.forEach((d, i) => {
+      //   if (i < data.length - 1) {
+      //     const t1 = d[0], v1 = d[1];
+      //     const t2 = formattedData[i + 1][0], v2 = formattedData[i + 1][1];
+      //     chartPlane.append('line')
+      //       .attr('x1', (x(t1)))
+      //       .attr('y1', (y(v1))) 
+      //       .attr('x2', (x(t2)))
+      //       .attr('y2', (y(v2))) 
+      //       .style('shape-rendering', 'crispEdges')
+      //       .attr('stroke', 'steelblue')
+      //       .attr('stroke-width', 1);
+      //   }
+      // });
+      
+  
+      const containerHeight = chartHeight - margin.top - 1;
+  
+      Object.values(queryResults.litPixels).map((litPixelOfMeasure: string[][]) => {
+        pixelArrayToCooordinates(litPixelOfMeasure).map(
+          ({ x, y }: { x: number; y: number }, index: number) => {
+            addCircle({ x, y }, 'steelblue', containerHeight, svg);
+          }
+        );
+      });
+    
       const zoom = d3
         .zoom()
         .on('zoom', (event: any) => {
@@ -484,14 +536,14 @@ const Dashboard = () => {
             return;
           }
 
-          path.attr(
-            'd',
-            d3
-              .line()
-              .x((d: any) => newX(d[0]))
-              .y((d: any) => y(d[1]))
-              .curve(d3.curveMonotoneX)
-          );
+          // path.attr(
+          //   'd',
+          //   d3
+          //     .line()
+          //     .x((d: any) => newX(d[0]))
+          //     .y((d: any) => y(d[1]))
+          //     .curve(d3.curveMonotoneX)
+          // );
 
           chartPlane
             .selectAll('.point')
@@ -503,7 +555,6 @@ const Dashboard = () => {
         .on('end', (event: any) => {
           const newX = event.transform.rescaleX(x);
           let [start, end] = newX.domain().map((d: any) => dayjs(d.getTime()).toDate());
-
           // add hard limit on zoom in
           if (end.getTime() - start.getTime() < 30000) {
             return;
@@ -533,8 +584,11 @@ const Dashboard = () => {
     );
 
     // Set up scales
-    const minTs = d3.min(formattedData, (d: any) => d[0]) as Date;
-    const maxTs = d3.max(formattedData, (d: any) => d[0]) as Date;
+    // const minTs = d3.max(formattedData, (d: any) => d[0]) as Date;
+    // const maxTs = d3.max(formattedData, (d: any) => d[0]) as Date;
+
+    const minTs = from as Date;
+    const maxTs = to as Date;
     const x = d3
       .scaleTime()
       .domain([minTs, maxTs])
@@ -542,6 +596,7 @@ const Dashboard = () => {
 
     const minValue = d3.min(formattedData, (d: any) => d[1]);
     const maxValue = d3.max(formattedData, (d: any) => d[1]);
+
     const y = d3
       .scaleLinear()
       .domain([minValue, maxValue])
@@ -561,7 +616,7 @@ const Dashboard = () => {
     chartPlane
       .append('g')
       .attr('class', 'grid')
-      .attr('transform', `translate(0, ${modalHeight - margin.bottom})`)
+      .attr('transform', `translate(0, ${modalHeight})`)
       .call(
         makeXGridlines()
           .tickSize(-modalHeight + margin.top) // Extend lines down to the bottom
@@ -611,7 +666,9 @@ const Dashboard = () => {
       .attr('y', (d: any) => y(d[1]))
       .attr('width', 1)
       .attr('height', 1)
-      .attr('fill', 'steelblue');
+      .attr('fill', 'steelblue')
+      .attr('stroke', 'black') // Add border
+      .attr('stroke-width', 0.1); // Thin border
 
     // Add path
     const line = d3
@@ -626,7 +683,7 @@ const Dashboard = () => {
       .datum(formattedData)
       .attr('fill', 'none')
       .attr('stroke', 'steelblue')
-      .attr('stroke-width', 1)
+      .attr('stroke-width', 1 )
       .attr('d', line);
 
     const zoom = d3
@@ -641,14 +698,14 @@ const Dashboard = () => {
           return;
         }
 
-        path.attr(
-          'd',
-          d3
-            .line()
-            .x((d: any) => newX(d[0]))
-            .y((d: any) => y(d[1]))
-            .curve(d3.curveMonotoneX)
-        );
+        // path.attr(
+        //   'd',
+        //   d3
+        //     .line()
+        //     .x((d: any) => newX(d[0]))
+        //     .y((d: any) => y(d[1]))
+        //     .curve(d3.curveMonotoneX)
+        // );
 
         chartPlane
           .selectAll('.point')
@@ -685,12 +742,12 @@ const Dashboard = () => {
   useEffect(() => {
     d3.select(window).on('resize', function () {
       if (d3.select('#chart-content').node()) {
-        setWidth(d3.select('#chart-content').node().getBoundingClientRect().width);
+        setWidth(Math.floor(d3.select('#chart-content').node().getBoundingClientRect().width));
       }
-
+    
       if (d3.select('#chart-content-modal').node()) {
-        setModalWidth(d3.select('#chart-content-modal').node().getBoundingClientRect().width);
-        setModalHeight(d3.select('#chart-content-modal').node().getBoundingClientRect().height);
+        setModalWidth(Math.floor(d3.select('#chart-content-modal').node().getBoundingClientRect().width));
+        setModalHeight(Math.floor(d3.select('#chart-content-modal').node().getBoundingClientRect().height));
       }
     });
   }, []);
@@ -703,10 +760,16 @@ const Dashboard = () => {
 
     let chartHeight = height / measures.length;
 
-    const containerHeight = chartHeight - margin.top;
+  
+    const containerHeight = chartHeight - margin.top - 1;
+
+
     errors.map((error: ErrorDto, index: number) => {
       const svg = d3.select(`#svg${index} > g`);
-
+      // if(index === 0){
+      //   addCircle({ x: 1, y: 390 }, 'purple', containerHeight, svg);
+      //   addCircle({ x: 0, y: 0 }, 'cyan', containerHeight, svg);
+      // }
       if (isFalsePixelsVisible) {
         pixelArrayToCooordinates(error.falsePixels).map(
           ({ x, y }: { x: number; y: number }, index: number) => {

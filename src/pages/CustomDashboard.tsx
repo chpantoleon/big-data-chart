@@ -378,12 +378,17 @@ const Dashboard = () => {
     const formattedData = data.map((d: any) => [new Date(d.timestamp), d.value] as [Date, number]);
 
     // Set up scales
-    const minTs = new Date(
+    let minTs = new Date(
       Math.max(d3.min(formattedData, (d: any) => d[0].getTime()) as number, from.getTime())
     );
-    const maxTs = new Date(
+    let maxTs = new Date(
       Math.min(d3.max(formattedData, (d: any) => d[0].getTime()) as number, to.getTime())
     );
+
+    if(queryResults[1].timeRange){
+      minTs = new Date(queryResults[1].timeRange.from);
+      maxTs = new Date(queryResults[1].timeRange.to);
+    }
 
     // Start from a pixel right of the axis
     // End at the right edge
@@ -457,6 +462,21 @@ const Dashboard = () => {
       .attr('transform', `translate(${margin.left}, 0)`)
       .call(d3.axisLeft(y).ticks(7));
 
+    // formattedData.forEach((d, i) => {
+    //   if (i < data.length - 1) {
+    //     const t1 = d[0], v1 = d[1];
+    //     const t2 = formattedData[i + 1][0], v2 = formattedData[i + 1][1];
+    //     chartPlane.append('line')
+    //       .attr('x1', Math.floor(x(t1)) + 1 / window.devicePixelRatio)
+    //       .attr('y1', Math.floor(y(v1)) + 1 / window.devicePixelRatio) 
+    //       .attr('x2', Math.floor(x(t2)) + 1 / window.devicePixelRatio)
+    //       .attr('y2', Math.floor(y(v2)) + 1 / window.devicePixelRatio) 
+    //       .style('shape-rendering', 'crispEdges')
+    //       .attr('stroke', 'steelblue')
+    //       .attr('stroke-width', 1);
+    //   }
+    // });
+      
     // Add path
     const line = d3
       .line()
@@ -475,17 +495,17 @@ const Dashboard = () => {
       .attr('d', line);
 
     // Add data points as small rectangles (1x1 pixels)
-    formattedData.forEach((d: any) => {
-      chartPlane
-        .append('rect')
-        .attr('class', 'point') // Center the rectangle on the x coordinate
-        .attr('x', Math.floor(x(d[0]))) // Center the rectangle on the x coordinate
-        .attr('y', Math.floor(y(d[1]))) // Center the rectangle on the y coordinate
-        .attr('width', 1 / window.devicePixelRatio)
-        .attr('height', 1 / window.devicePixelRatio)
-        .style('shape-rendering', 'crispEdges')
-        .attr('fill', 'purple');
-    });
+    // formattedData.forEach((d: any) => {
+    //   chartPlane
+    //     .append('rect')
+    //     .attr('class', 'point') // Center the rectangle on the x coordinate
+    //     .attr('x', Math.floor(x(d[0]))) // Center the rectangle on the x coordinate
+    //     .attr('y', Math.floor(y(d[1]))) // Center the rectangle on the y coordinate
+    //     .attr('width', 1 / window.devicePixelRatio)
+    //     .attr('height', 1 / window.devicePixelRatio)
+    //     .style('shape-rendering', 'crispEdges')
+    //     .attr('fill', 'blue');
+    // });
 
     const zoom = d3
       .zoom()
