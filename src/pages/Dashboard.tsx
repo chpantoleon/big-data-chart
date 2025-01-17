@@ -83,7 +83,7 @@ const Dashboard = () => {
 
   const clearMeasures = () => setMeasures([]);
 
-  const pixelArrayToCooordinates = (pixelArray: string[][]): { x: number; y: number }[] =>
+  const pixelArrayToCoordinates = (pixelArray: string[][]): { x: number; y: number }[] =>
     pixelArray
       .map((range, index) => {
         if (!range.length) return null;
@@ -272,7 +272,6 @@ const Dashboard = () => {
 
     let chartWidth = Math.floor(d3.select('#chart-content').node().getBoundingClientRect().width);
     setWidth(chartWidth);
-    let chartHeight = height;
 
     const requestRaw: Query = {
       query: {
@@ -281,7 +280,7 @@ const Dashboard = () => {
         measures: measures.map(({ id }) => id),
         viewPort: {
           width: chartWidth - margin.left - margin.right,
-          height: Math.floor(chartHeight / measures.length - margin.bottom - margin.top),
+          height: Math.floor(height / measures.length - margin.bottom - margin.top),
         },
         accuracy: 1,
       },
@@ -437,12 +436,17 @@ const Dashboard = () => {
     const formattedData = data.map((d: any) => [new Date(d.timestamp), d.value] as [Date, number]);
 
     // Set up scales
-    const minTs = new Date(
+    let minTs = new Date(
       Math.max(d3.min(formattedData, (d: any) => d[0].getTime()) as number, from.getTime())
     );
-    const maxTs = new Date(
+    let maxTs = new Date(
       Math.min(d3.max(formattedData, (d: any) => d[0].getTime()) as number, to.getTime())
     );
+
+    if(queryResults!.timeRange){
+      minTs = new Date(queryResults!.timeRange.from);
+      maxTs = new Date(queryResults!.timeRange.to);
+    }
 
     // Start from a pixel right of the axis
     // End at the right edge
@@ -578,7 +582,7 @@ const Dashboard = () => {
     const svg = d3.select(selector);
 
     if (isFalsePixelsVisible) {
-      pixelArrayToCooordinates(error.falsePixels).map(
+      pixelArrayToCoordinates(error.falsePixels).map(
         ({ x, y }: { x: number; y: number }, index: number) => {
           addRect({ x, y: y }, 'red', height, svg);
         }
@@ -586,7 +590,7 @@ const Dashboard = () => {
     }
 
     if (isMissingPixelsVisible) {
-      pixelArrayToCooordinates(error.missingPixels).map(
+      pixelArrayToCoordinates(error.missingPixels).map(
         ({ x, y }: { x: number; y: number }, index: number) => {
           addRect({ x, y: y }, 'orange', height, svg);
         }

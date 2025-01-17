@@ -20,6 +20,7 @@ export interface QueryResultsDto {
   progressiveQueryTime: number;
   aggFactors: Record<string, number>;
   flag: boolean;
+  litPixels: Record<string, string[][]>;
 };
 
 export interface ErrorDto {
