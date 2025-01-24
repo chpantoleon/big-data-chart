@@ -365,7 +365,8 @@ const Dashboard = () => {
     selector: string,
     data: { timestamp: number; value: number }[],
     width: number,
-    height: number
+    height: number,
+    litPixels: { x: number; y: number }[]
   ) => {
     const containerWidth = width - margin.left - margin.right;
 
@@ -495,17 +496,6 @@ const Dashboard = () => {
       .attr('d', line);
 
     // Add data points as small rectangles (1x1 pixels)
-    // formattedData.forEach((d: any) => {
-    //   chartPlane
-    //     .append('rect')
-    //     .attr('class', 'point') // Center the rectangle on the x coordinate
-    //     .attr('x', Math.floor(x(d[0]))) // Center the rectangle on the x coordinate
-    //     .attr('y', Math.floor(y(d[1]))) // Center the rectangle on the y coordinate
-    //     .attr('width', 1 / window.devicePixelRatio)
-    //     .attr('height', 1 / window.devicePixelRatio)
-    //     .style('shape-rendering', 'crispEdges')
-    //     .attr('fill', 'blue');
-    // });
 
     const zoom = d3
       .zoom()
@@ -532,6 +522,67 @@ const Dashboard = () => {
         setTo(end);
         fetchData(start, end, metadata!);
       });
+
+  // Lens setup
+  const lensGroup = svg.append('g').attr('class', 'lens-group').style('pointer-events', 'none');
+
+  const lensCircle = lensGroup
+    .append('circle')
+    .attr('r', 50)
+    .attr('stroke', 'black')
+    .attr('fill', 'rgba(255, 255, 255, 0.8)')
+    .attr('visibility', 'hidden');
+
+  const lensGrid = lensGroup.append('g').attr('class', 'lens-grid');
+
+  const drawGrid = (x:number, y:number) => {
+    lensGrid.selectAll('*').remove();
+
+    const gridSize = 6; // Size of each cell in the grid
+    const gridExtent = 3; // Number of cells around the hover point
+
+    for (let i = -gridExtent; i <= gridExtent; i++) {
+      for (let j = -gridExtent; j <= gridExtent; j++) {
+        const pixel = litPixels.find((p) => p.x === x + i && p.y === y + j);
+        lensGrid
+          .append('rect')
+          .attr('x', i * gridSize + x)
+          .attr('y', j * gridSize + y)
+          .attr('width', gridSize)
+          .attr('height', gridSize)
+          .attr('fill', pixel !== undefined ? 'lightgray' : 'white')
+          .attr('stroke', 'black')
+          .attr('stroke-width', 0.5);
+      }
+    }
+  };
+
+  svg.on('mousemove', (event: any) => {
+    const [mouseX, mouseY] = d3.pointer(event);
+
+    // Check bounds
+    if (
+      mouseX < margin.left ||
+      mouseX > width - margin.right ||
+      mouseY < margin.top ||
+      mouseY > height - margin.bottom
+    ) {
+      lensCircle.attr('visibility', 'hidden');
+      lensGrid.selectAll('*').remove();
+      return;
+    }
+
+    const xValue = mouseX; // Map to nearest x-value
+    const yValue = mouseY; // Map to nearest y-value
+
+    lensCircle.attr('cx', mouseX).attr('cy', mouseY).attr('visibility', 'visible');
+    drawGrid(xValue, yValue);
+  });
+
+  svg.on('mouseout', () => {
+    lensCircle.attr('visibility', 'hidden');
+    lensGrid.selectAll('*').remove();
+  });
 
     svg.call(zoom);
   };
@@ -606,14 +657,15 @@ const Dashboard = () => {
 
     const rawSeries = Object.values(queryResults[0].data);
     const series = Object.values(queryResults[1].data);
-
+    const litPixels = Object.values(queryResults[1].litPixels);
     series.map((data, index) => {
-      renderChart(`#svg${index}`, data, width, Math.floor(height / measures.length));
+      renderChart(`#svg${index}`, data, width, Math.floor(height / measures.length), pixelArrayToCooordinates(litPixels[index]));
       renderChart(
         `#svg${index}_raw`,
         rawSeries[index],
         width,
-        Math.floor(height / measures.length)
+        Math.floor(height / measures.length),
+        []
       );
     });
   }, [queryResults, metadata, height, isFalsePixelsVisible, isMissingPixelsVisible]);
@@ -626,7 +678,8 @@ const Dashboard = () => {
       `#svg${selectedChart}-modal`,
       queryResults[1].data[selectedChart],
       modalWidth,
-      modalHeight
+      modalHeight,
+      []
     );
   }, [
     queryResults,
