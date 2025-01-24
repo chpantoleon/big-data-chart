@@ -1,32 +1,42 @@
-import { styled } from '@mui/material/styles';
-import LinearProgress, { linearProgressClasses } from '@mui/material/LinearProgress';
-
-const BorderLinearProgress = styled(LinearProgress)(({ theme }) => ({
-  height: 10,
-  borderRadius: 0,
-  [`&.${linearProgressClasses.colorPrimary}`]: {
-    backgroundColor: '#cce7ff',
-    ...theme.applyStyles('dark', {
-      backgroundColor: theme.palette.grey[800],
-    }),
-  },
-  [`& .${linearProgressClasses.bar}`]: {
-    borderRadius: 0,
-    backgroundColor: '#1a90ff',
-    ...theme.applyStyles('dark', {
-      backgroundColor: '#308fe8',
-    }),
-  },
-}));
+import { BarChart } from '@mui/x-charts/BarChart';
 
 interface ProgressBarProps {
-  value: number
+  series: any[],
 }
 
-const ProgressBar = ({value}: ProgressBarProps) => {
+const ResponseTimes = ({series}: ProgressBarProps) => {
   return (
-      <BorderLinearProgress variant="determinate" value={value} />
+    <BarChart
+      layout={'horizontal'}
+      dataset={series}
+      series={[
+        { dataKey: 'query', stack: 'query', label: 'Query Time' },
+        { dataKey: 'response', stack: 'response', label: 'Total Response Time' },
+      ]}
+      yAxis={[{ scaleType: 'band', dataKey: 'dataset' }]}
+      xAxis={[{ label: 'response time (ms)' }]}
+      width={300}
+      height={150}
+      skipAnimation
+      resolveSizeBeforeRender
+      margin={{ top: 25, left: 55 }}
+      slots={{
+        noDataOverlay: ()=>(<></>)
+      }}
+      slotProps={{
+        legend: {
+          direction: 'row',
+          position: { vertical: 'top', horizontal: 'right' },
+          padding: 0,
+          itemMarkWidth: 10,
+          itemMarkHeight: 10,
+          labelStyle: {
+            fontSize: 14,
+          },
+        },
+      }}
+    />
   );
 }
 
-export default ProgressBar;
+export default ResponseTimes;
