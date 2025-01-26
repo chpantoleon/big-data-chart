@@ -28,13 +28,11 @@ import Toolbar from '@mui/material/Toolbar';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import CloseIcon from '@mui/icons-material/Close';
 import Dialog from '@mui/material/Dialog';
-import CircleIcon from '@mui/icons-material/Circle';
 import CircularProgress from '@mui/material/CircularProgress';
 
 import {Measure, Metadata, metadataDtoToDomain} from '../interfaces/metadata';
 import {ErrorDto, QueryResultsDto} from '../interfaces/data';
 import {Query, queryToQueryDto} from '../interfaces/query';
-import ProgressBar from 'components/ProgressBar';
 import ResponseTimes from "components/ProgressBar";
 
 const round = (num: number): number => Math.round((num + Number.EPSILON) * 100) / 100;
@@ -63,19 +61,20 @@ const Dashboard = () => {
   const [table, setTable] = useState<string>('manufacturing_exp');
 
   const [metadata, setMetadata] = useState<Metadata>();
-  const [queryResults, setQueryResults] = useState<QueryResultsDto>();
-  const [queryResultsRaw, setQueryResultsRaw] = useState<QueryResultsDto>();
+
+  // multiple results by algorithm
+  const [queryResults, setQueryResults] = useState<Record<string, QueryResultsDto | undefined>>({});
 
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [selectedChart, setSelectedChart] = useState<number | null>(null);
 
-  const [isCompareVisible, setIsCompareVisible] = useState<boolean>(false);
+  // multiple response times by algoirthm
+  const [responseTimes, setResponseTimes] = useState<Record<string, number>>({});
+  // algorithms array
+  const [algorithms, setAlgorithms] = useState<string[]>(['MinMaxCache']);
 
-  const [responseTime, setResponseTime] = useState<number>(0);
-  const [responseTimeRaw, setResponseTimeRaw] = useState<number>(0);
-
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const abortControllerRawRef = useRef<AbortController | null>(null);
+  // a dictionary of AbortControllers keyed by algorithm
+  const abortControllersRef = useRef<{ [algo: string]: AbortController | null }>({});
 
   const margin = {top: 20, right: 0, bottom: 20, left: 40};
   const min = 0;
@@ -84,27 +83,23 @@ const Dashboard = () => {
 
   const clearMeasures = () => setMeasures([]);
 
+  // returning an array of { dataset, query, response }
   const getResponseTimeSeries = (): any[] => {
-    let series = [];
-
-    if (queryResults && responseTime) {
-      series.push({
-        dataset: 'Cached',
-        query: queryResults.queryTime * 1000,
-        response: responseTime,
-      })
+    const series = [];
+    for (const algo of algorithms) {
+      const res = queryResults[algo];
+      const time = responseTimes[algo];
+      if (res && time) {
+        series.push({
+          dataset: algo,
+          // If queryTime is in seconds, multiply by 1000 to get ms
+          query: (res.queryTime || 0) * 1000,
+          response: time,
+        });
+      }
     }
-
-    if (queryResultsRaw && responseTimeRaw) {
-      series.push({
-        dataset: 'Raw',
-        query: queryResultsRaw.queryTime * 1000,
-        response: responseTimeRaw,
-      })
-    }
-
     return series;
-  }
+  };
 
   const pixelArrayToCoordinates = (pixelArray: string[][]): { x: number; y: number }[] =>
     pixelArray
@@ -157,13 +152,14 @@ const Dashboard = () => {
 
   const getTickFormat = () => {
     const range = to.getTime() - from.getTime();
-    if (range < 60000) {
-      return d3.timeFormat('%H:%M:%S.%L'); // Show date and time
-    } else if (range < 86400000) {
-      return d3.timeFormat('%H:%M:%S'); // Show time
-    } else {
-      return d3.timeFormat('%d-%m-%y'); // Show time with milliseconds
-    }
+    // if (range < 60000) {
+    //   return d3.timeFormat('%H:%M:%S.%L'); // Show date and time
+    // } else if (range < 86400000) {
+    //   return d3.timeFormat('%H:%M:%S'); // Show time
+    // } else {
+    //   return d3.timeFormat('%d-%m-%y'); // Show time with milliseconds
+    // }
+    return d3.timeFormat('%Y-%m-%d %H:%M:%S');
   };
 
   const fetchMetadata = async () => {
@@ -190,7 +186,8 @@ const Dashboard = () => {
     }
   };
 
-  const fetchData = async (from: Date, to: Date, metadata: Metadata) => {
+  // pass algorithm also
+  const fetchData = async (algorithm: string, from: Date, to: Date, metadata: Metadata) => {
     let fromQuery = from.getTime();
     if (fromQuery < metadata.timeRange.from) {
       fromQuery = metadata.timeRange.from;
@@ -203,12 +200,11 @@ const Dashboard = () => {
       setTo(dayjs(metadata.timeRange.to).toDate());
     }
 
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort(); // Abort the previous request
+    if (abortControllersRef.current[algorithm]) {
+      abortControllersRef.current[algorithm]!.abort();
     }
-
     const controller = new AbortController();
-    abortControllerRef.current = controller;
+    abortControllersRef.current[algorithm] = controller;
 
     setLoading(true);
 
@@ -246,16 +242,19 @@ const Dashboard = () => {
 
     let startTime = performance.now();
     try {
-      const queryResultsCached = await apiService.getData(
+      const queryResults = await apiService.getData(
         datasource,
         queryToQueryDto(request),
         controller.signal
       );
 
-      if (!queryResultsCached) {
+      if (!queryResults) {
         return;
       }
-      setQueryResults(queryResultsCached);
+      setQueryResults((prev) => ({
+        ...prev,
+        [algorithm]: queryResults,
+      }));
     } catch (error) {
       console.error(error);
       if (axios.isCancel(error)) {
@@ -267,76 +266,11 @@ const Dashboard = () => {
     } finally {
       setLoading(false);
     }
-
     let endTime = performance.now();
-    setResponseTime(endTime - startTime);
-  };
-
-  const fetchRawData = async (from: Date, to: Date, metadata: Metadata) => {
-    let fromQuery = from.getTime();
-    if (fromQuery < metadata.timeRange.from) {
-      fromQuery = metadata.timeRange.from;
-      setFrom(dayjs(metadata.timeRange.from).toDate());
-    }
-
-    let toQuery = to.getTime();
-    if (toQuery > metadata.timeRange.to) {
-      toQuery = metadata.timeRange.to;
-      setTo(dayjs(metadata.timeRange.to).toDate());
-    }
-
-    if (abortControllerRawRef.current) {
-      abortControllerRawRef.current.abort(); // Abort the previous request
-    }
-
-    const controller = new AbortController();
-    abortControllerRawRef.current = controller;
-
-    setLoading(true);
-
-    let chartWidth = Math.floor(d3.select('#chart-content').node().getBoundingClientRect().width);
-    setWidth(chartWidth);
-
-    const requestRaw: Query = {
-      query: {
-        from: dayjs(fromQuery).toDate(),
-        to: dayjs(toQuery).toDate(),
-        measures: measures.map(({id}) => id),
-        viewPort: {
-          width: chartWidth - margin.left - margin.right,
-          height: Math.floor(height / measures.length - margin.bottom - margin.top),
-        },
-        accuracy: 1,
-      },
-      schema: schema,
-      table: table,
-    };
-
-    const startTime = performance.now();
-    try {
-      const queryResultsRaw = await apiService.getData(
-        datasource,
-        queryToQueryDto(requestRaw),
-        controller.signal
-      );
-
-      if (!queryResultsRaw) {
-        return;
-      }
-      setQueryResultsRaw(queryResultsRaw);
-    } catch (error) {
-      console.error(error);
-      if (axios.isCancel(error)) {
-        console.log('Request canceled:', error.message);
-        return null;
-      } else {
-        throw error; // Re-throw other errors
-      }
-    } finally {
-      setLoading(false);
-    }
-    const endTime = performance.now();
-    setResponseTimeRaw(endTime - startTime);
+    setResponseTimes((prev) => ({
+      ...prev,
+      [algorithm]: endTime - startTime,
+    }));
   };
 
   const handleTableChange = (event: MouseEvent<HTMLElement>, table: string) => {
@@ -380,13 +314,46 @@ const Dashboard = () => {
     }
   };
 
-  const debouncedFetchData = useDebouncedCallback(
-    (from, to, metadata) => fetchData(from, to, metadata!),
-    100
-  );
+  const handleAlgorithmChange = (event: SelectChangeEvent<string[]>) => {
+    const {
+      target: { value },
+    } = event;
+    // value is string[] of selected algorithms
+    const newAlgos = typeof value === 'string' ? value.split(',') : value;
 
-  const debouncedFetchRawData = useDebouncedCallback(
-    (from, to, metadata) => fetchRawData(from, to, metadata!),
+   // 1. Remove any old algorithms from queryResultsByAlgorithm
+    setQueryResults((prev) => {
+      const updated = { ...prev };
+      Object.keys(updated).forEach((key) => {
+        if (!newAlgos.includes(key)) {
+          delete updated[key];
+        }
+      });
+      return updated;
+    });
+
+    // 2. Remove any old algorithms from responseTimes
+    setResponseTimes((prev) => {
+      const updated = { ...prev };
+      Object.keys(updated).forEach((key) => {
+        if (!newAlgos.includes(key)) {
+          delete updated[key];
+        }
+      });
+      return updated;
+    });
+
+    // 3. Now set the new 'algorithms' state
+    setAlgorithms(newAlgos);
+  };
+
+  const debouncedFetchAll = useDebouncedCallback(
+    async (algos: string[], from, to, metadata) => {
+      // Loop over each algorithm in sequence
+      for (const algo of algos) {
+        await fetchData(algo, from, to, metadata);
+      }
+    },
     100
   );
 
@@ -445,7 +412,8 @@ const Dashboard = () => {
     selector: string,
     data: { timestamp: number; value: number }[],
     width: number,
-    height: number
+    height: number,
+    timeRange: { from: number; to: number }
   ) => {
     const containerWidth = width - margin.left - margin.right;
 
@@ -458,17 +426,8 @@ const Dashboard = () => {
     const formattedData = data.map((d: any) => [new Date(d.timestamp), d.value] as [Date, number]);
 
     // Set up scales
-    let minTs = new Date(
-      Math.max(d3.min(formattedData, (d: any) => d[0].getTime()) as number, from.getTime())
-    );
-    let maxTs = new Date(
-      Math.min(d3.max(formattedData, (d: any) => d[0].getTime()) as number, to.getTime())
-    );
-
-    if (queryResults!.timeRange) {
-      minTs = new Date(queryResults!.timeRange.from);
-      maxTs = new Date(queryResults!.timeRange.to);
-    }
+    const minTs = new Date(timeRange.from);
+    const maxTs = new Date(timeRange.to);
 
     // Start from a pixel right of the axis
     // End at the right edge
@@ -559,18 +518,18 @@ const Dashboard = () => {
       .style('shape-rendering', 'crispEdges')
       .attr('d', line);
 
-    // Add data points as small rectangles (1x1 pixels)
-    formattedData.forEach((d: any) => {
-      chartPlane
-        .append('rect')
-        .attr('class', 'point') // Center the rectangle on the x coordinate
-        .attr('x', Math.floor(x(d[0]))) // Center the rectangle on the x coordinate
-        .attr('y', Math.floor(y(d[1]))) // Center the rectangle on the y coordinate
-        .attr('width', 1 / window.devicePixelRatio)
-        .attr('height', 1 / window.devicePixelRatio)
-        .style('shape-rendering', 'crispEdges')
-        .attr('fill', 'purple');
-    });
+    // Add data points as small rectangles (1x1 pixels) 
+    // formattedData.forEach((d: any) => {
+    //   chartPlane
+    //     .append('rect')
+    //     .attr('class', 'point') // Center the rectangle on the x coordinate
+    //     .attr('x', Math.floor(x(d[0]))) // Center the rectangle on the x coordinate
+    //     .attr('y', Math.floor(y(d[1]))) // Center the rectangle on the y coordinate
+    //     .attr('width', 1 / window.devicePixelRatio)
+    //     .attr('height', 1 / window.devicePixelRatio)
+    //     .style('shape-rendering', 'crispEdges')
+    //     .attr('fill', 'purple');
+    // });
 
     const zoom = d3
       .zoom()
@@ -647,43 +606,51 @@ const Dashboard = () => {
 
   // reset zoom
   useEffect(() => {
-    if (!queryResults || (!queryResultsRaw && isCompareVisible) || selectedChart !== null) return;
-
-    const series = Object.values(queryResults!.data);
-    series.map((_, index) => {
-      const svg = d3.select(`#svg${index}`);
-      svg.call(d3.zoom().transform, d3.zoomIdentity);
-    });
-  }, [queryResults, queryResultsRaw]);
+    if (!measures.length) return;
+    for (const algo of algorithms) {
+      const res = queryResults[algo];
+      if (!res) continue;
+      const series = Object.values(res.data);
+      series.forEach((_, index) => {
+        const svg = d3.select(`#svg_${algo}_${index}`);
+        svg.call(d3.zoom().transform, d3.zoomIdentity);
+      });
+    }
+  }, [queryResults, measures, algorithms]);
 
   // reset zoom in modal
   useEffect(() => {
-    if (!queryResults || (!queryResultsRaw && isCompareVisible) || selectedChart === null) return;
-
-    const svg = d3.select(`#svg${selectedChart}-modal`);
-    svg.call(d3.zoom().transform, d3.zoomIdentity);
-  }, [queryResults, queryResultsRaw]);
+    if (selectedChart === null) return;
+    for (const algo of algorithms) {
+      const svg = d3.select(`#svg_${algo}_${selectedChart}-modal`);
+      svg.call(d3.zoom().transform, d3.zoomIdentity);
+    }
+  }, [selectedChart, algorithms]);
 
   // render chart
   useEffect(() => {
-    if (!queryResults || (!queryResultsRaw && isCompareVisible) || selectedChart !== null) return;
+    if (!measures.length || !queryResults) return;
 
-    const series = Object.values(queryResults.data);
+    for (const algo of algorithms) {
+      const res = queryResults[algo];
+      if (!res) continue; // skip if not fetched yet
 
-    series.map((data, index) => {
-      renderChart(`#svg${index}`, data, width, Math.floor(height / measures.length));
-      if (isCompareVisible) {
+      const series = Object.values(res.data);
+      const timeRange = res.timeRange;
+      // For each measure index, we have series[index]
+      series.forEach((data, index) => {
         renderChart(
-          `#svg${index}_raw`,
-          Object.values(queryResultsRaw!.data)[index],
+          `#svg_${algo}_${index}`,
+          data,
           width,
-          Math.floor(height / measures.length)
+          Math.floor(height / measures.length),
+          {from: timeRange.from, to: timeRange.to}
         );
-      }
-    });
+      });
+    }
   }, [
     queryResults,
-    queryResultsRaw,
+    algorithms,
     metadata,
     height,
     isFalsePixelsVisible,
@@ -692,22 +659,33 @@ const Dashboard = () => {
 
   // render chart in modal
   useEffect(() => {
-    if (!queryResults || (!queryResultsRaw && isCompareVisible) || selectedChart === null) return;
+    if (!measures.length || !queryResults || selectedChart === null) return;
 
-    renderChart(
-      `#svg${selectedChart}-modal`,
-      queryResults.data[selectedChart],
-      modalWidth,
-      modalHeight
-    );
+    for (const algo of algorithms) {
+      const res = queryResults[algo];
+      if (!res) continue;
+      const series = Object.values(res.data);
+      const timeRange = res.timeRange;
+      // For each measure index, we have series[index]
+      series.forEach((data, index) => {
+        renderChart(
+          `#svg_${algo}_${selectedChart}-modal`,
+          data,
+          modalWidth,
+          Math.floor(modalHeight / algorithms.length),
+          {from: timeRange.from, to: timeRange.to}
+        );
+      });
+    }
   }, [
     queryResults,
+    algorithms,
     metadata,
     modalHeight,
     isFalsePixelsVisible,
     isMissingPixelsVisible,
     selectedChart,
-  ]);
+ ]);
 
   // add resize handler for charts
   useEffect(() => {
@@ -730,26 +708,37 @@ const Dashboard = () => {
   // render error pixels
   useEffect(() => {
     if (!queryResults || !measures || selectedChart !== null) return;
+    
+    for (const algo of algorithms) {
+      const res = queryResults[algo];
+      if (!res) continue;
 
-    const errors = Object.values(queryResults.error);
+      const errors = Object.values(res.error);
+      const chartHeight = Math.floor(height / measures.length);
+      const containerHeight = chartHeight - margin.bottom - 1;
 
-    let chartHeight = Math.floor(height / measures.length);
-
-    const containerHeight = chartHeight - margin.bottom - 1;
-
-    errors.map((error: ErrorDto, index: number) => {
-      renderErrorPixels(`#svg${index} > g`, error, containerHeight);
-    });
+      errors.forEach((err, index) => {
+        renderErrorPixels(`#svg_${algo}_${index} > g`, err, containerHeight);
+      });
+    }
   }, [queryResults, metadata, height, isFalsePixelsVisible, isMissingPixelsVisible]);
 
   // render error pixels in modal
   useEffect(() => {
     if (!queryResults || !measures || selectedChart === null) return;
 
-    const error = queryResults.error[selectedChart];
-
-    const containerHeight = modalHeight - margin.top;
-    renderErrorPixels(`#svg${selectedChart}-modal > g`, error, containerHeight);
+    for (const algo of algorithms) {
+      const res = queryResults[algo];
+      if (!res) continue;
+      const err = res.error[selectedChart];
+      const chartHeight = Math.floor(modalHeight / algorithms.length);
+      const containerHeight = chartHeight - margin.top;
+      renderErrorPixels(
+        `#svg_${algo}_${selectedChart}-modal > g`,
+        err,
+        containerHeight
+      );
+    }
   }, [queryResults, metadata, height, isFalsePixelsVisible, isMissingPixelsVisible]);
 
   // fetch metadata
@@ -762,15 +751,11 @@ const Dashboard = () => {
     if (!metadata || !from || !to || !measures.length) {
       return;
     }
-
-    debouncedFetchData(from, to, metadata!);
-
-    if (isCompareVisible) {
-      debouncedFetchRawData(from, to, metadata);
-    }
+    debouncedFetchAll(algorithms, from, to, metadata);
   }, [
     from,
     to,
+    algorithms,
     metadata,
     measures,
     height,
@@ -779,8 +764,8 @@ const Dashboard = () => {
     table,
     accuracy,
     selectedChart,
-    isCompareVisible,
   ]);
+
 
   return (
     <Box sx={{flexGrow: 1}}>
@@ -959,30 +944,32 @@ const Dashboard = () => {
                   </FormGroup>
                 </Grid>
                 <Grid size={12}>
-                  <Typography variant="overline">Compare with raw data</Typography>
-                  <FormGroup>
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          value={isCompareVisible}
-                          color="primary"
-                          size="small"
-                          onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-                            setIsCompareVisible(event.target.checked)
-                          }
-                        />
-                      }
-                      label="Show raw data"
-                    />
-                  </FormGroup>
+                <Typography variant="overline">Algorithms</Typography>
+                <Select
+                    multiple
+                    fullWidth
+                    size="small"
+                    value={algorithms}
+                    onChange={handleAlgorithmChange}
+                    renderValue={(selected) => (
+                      <div>
+                        {(selected as string[]).map((val) => (
+                          <Chip key={val} label={val} style={{ margin: 2 }} />
+                        ))}
+                      </div>
+                    )}
+                  >
+                    {/* You can list more algorithms here */}
+                    <MenuItem value="MinMaxCache">MinMaxCache</MenuItem>
+                    <MenuItem value="M4">M4</MenuItem>
+                    {/* Add more as needed */}
+                  </Select>
                 </Grid>
-                {!!responseTime && (
+                {!!Object.keys(responseTimes).length && (
                   <Grid size={12}>
                     <Typography variant="overline">Response time</Typography>
                     <Box>
-                      <ResponseTimes
-                        series={getResponseTimeSeries()}
-                      />
+                      <ResponseTimes series={getResponseTimeSeries()} />
                     </Box>
                   </Grid>
                 )}
@@ -990,7 +977,7 @@ const Dashboard = () => {
             </Card>
           </Grid>
           <Grid size={9}>
-            {!queryResults || (!queryResultsRaw && isCompareVisible)}
+            {!queryResults}
             {!measures.length ? (
               <Card variant="outlined">
                 <CardContent id="chart-content">
@@ -999,7 +986,7 @@ const Dashboard = () => {
                   </Typography>
                 </CardContent>
               </Card>
-            ) : !queryResults || (!queryResultsRaw && isCompareVisible) ? (
+            ) : !queryResults ? (
               <Card variant="outlined">
                 <CardContent id="chart-content">
                   <Typography sx={{color: 'text.secondary', fontSize: 14, textAlign: 'center'}}>
@@ -1014,92 +1001,78 @@ const Dashboard = () => {
                 </CardContent>
               </Card>
             ) : (
-              <>
-                {Object.values(queryResults!.data).map((_, index) => (
-                  <Card variant="outlined" key={`svg${index}`}>
-                    <CardContent>
-                      <Box sx={{transform: 'translate(0, 0)'}} id="chart-content">
-                        <Box
-                          display="flex"
-                          flexDirection={'row'}
-                          flexWrap={'nowrap'}
-                          alignContent={'center'}
-                          alignItems={'center'}
-                          justifyContent={'space-between'}
-                        >
-                          <Typography
-                            variant="body1"
-                            sx={{color: 'text.secondary', fontSize: 14}}
+              // Render measure-by-measure, and within each measure, render each algorithm’s chart
+              measures.map((measure, measureIndex) => (
+                <Card variant="outlined" key={`measure_${measureIndex}`} sx={{ mb: 2 }}>
+                  <CardContent id="chart-content">
+                    <Box
+                      display="flex"
+                      flexDirection={'row'}
+                      flexWrap={'nowrap'}
+                      alignItems={'center'}
+                      justifyContent={'space-between'}
+                    >
+                      <Typography variant="body1" sx={{ color: 'text.secondary', fontSize: 14 }}>
+                        {measure.name}
+                      </Typography>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          setSelectedChart(measure.id);
+                          setIsModalOpen(true);
+                        }}
+                      >
+                        <OpenInFullIcon fontSize={'small'} />
+                      </IconButton>
+                    </Box>
+
+                    {/* For each selected algorithm, display a sub-chart for this measure */}
+                    {algorithms.map((algo) => {
+                      const algoResult = queryResults[algo];
+                      // If there's no data yet for that algorithm, just show a loader or placeholder
+                      if (!algoResult) {
+                        return (
+                          <Box
+                            key={`chart_${algo}_${measureIndex}`}
+                            height={Math.floor(height / measures.length)}
+                            display="flex"
+                            alignItems="center"
+                            justifyContent="center"
                           >
-                            {measures[index]?.name}
-                          </Typography>
-                          <IconButton
-                            size="small"
-                            onClick={() => {
-                              setSelectedChart(measures[index]?.id);
-                              setIsModalOpen(true);
-                            }}
-                          >
-                            <OpenInFullIcon fontSize={'small'}/>
-                          </IconButton>
-                        </Box>
-                        <Box>
-                          {loading && (
-                            <Box
-                              sx={{
-                                width: '100%',
-                                height: '100%',
-                                position: 'absolute',
-                              }}
-                            >
-                              <CircularProgress
-                                size={'3rem'}
+                            {loading ? (
+                              <CircularProgress size={'3rem'} />
+                            ) : (
+                              <Typography
                                 sx={{
-                                  position: 'fixed',
-                                  top: '50%',
-                                  left: '50%',
-                                  marginTop: '-12px',
-                                  marginLeft: '-12px',
-                                  transform: 'translate(50%,-50%)',
+                                  color: 'text.secondary',
+                                  fontSize: 14,
+                                  textAlign: 'center',
                                 }}
-                              />
-                            </Box>
-                          )}
+                              >
+                                No data for {algo}
+                              </Typography>
+                            )}
+                          </Box>
+                        );
+                      }
+                      return (
+                        <Box key={`chart_${algo}_${measureIndex}`} position="relative">
+                          {/* Algorithm label */}
+                          <Typography variant="caption" sx={{ ml: 2 }}>
+                            {algo}
+                          </Typography>
+                          {/* The actual chart */}
                           <svg
-                            id={`svg${index}`}
+                            id={`svg_${algo}_${measureIndex}`}
                             width={width}
                             height={Math.floor(height / measures.length)}
                           />
                         </Box>
-                        {isCompareVisible && (
-                          <>
-                            <Box
-                              display="flex"
-                              flexDirection={'row'}
-                              flexWrap={'nowrap'}
-                              alignContent={'center'}
-                              alignItems={'center'}
-                              justifyContent={'space-between'}
-                            >
-                              <Typography
-                                variant="body1"
-                                sx={{color: 'text.secondary', fontSize: 14}}
-                              >
-                                {measures[index]?.name} raw data
-                              </Typography>
-                            </Box>
-                            <svg
-                              id={`svg${index}_raw`}
-                              width={width}
-                              height={Math.floor(height / measures.length)}
-                            />
-                          </>
-                        )}
-                      </Box>
-                    </CardContent>
-                  </Card>
-                ))}
-              </>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              ))
             )}
           </Grid>
         </Grid>
@@ -1110,14 +1083,14 @@ const Dashboard = () => {
         fullWidth
         maxWidth="xl" // Adjust as needed
         PaperProps={{
-          style: {height: '90vh', overflow: 'hidden'},
+          style: { height: '90vh', overflow: 'hidden' },
         }}
       >
-        <Box sx={{width: '100%', height: '100%', p: 2}}>
+        <Box sx={{ width: '100%', height: '100%', p: 2 }}>
           <Box display={'flex'} alignItems={'flex-end'}>
             {selectedChart !== null && (
               <Typography
-                style={{position: 'absolute', top: 8, left: 8, zIndex: 1}}
+                style={{ position: 'absolute', top: 8, left: 8, zIndex: 1 }}
                 variant="body1"
               >
                 {measures[selectedChart]?.name}
@@ -1129,16 +1102,25 @@ const Dashboard = () => {
                 setSelectedChart(null);
                 setIsModalOpen(false);
               }}
-              style={{position: 'absolute', top: 8, right: 8, zIndex: 1}}
+              style={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}
             >
-              <CloseIcon fontSize={'small'}/>
+              <CloseIcon fontSize={'small'} />
             </IconButton>
           </Box>
+
           <Box
-            sx={{width: '100%', height: '100%', transform: 'translate(0, 0)'}}
+            sx={{ width: '100%', height: '100%', transform: 'translate(0, 0)' }}
             id="chart-content-modal"
           >
-            <svg id={`svg${selectedChart}-modal`} width={modalWidth} height={modalHeight}/>
+            {selectedChart !== null &&
+              algorithms.map((algo) => (
+                <svg
+                  key={`svg_${algo}_${selectedChart}-modal`}
+                  id={`svg_${algo}_${selectedChart}-modal`}
+                  width={modalWidth}
+                  height={modalHeight / algorithms.length}
+                />
+              ))}
           </Box>
         </Box>
       </Dialog>
