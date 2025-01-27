@@ -20,10 +20,7 @@ import dayjs, {Dayjs} from 'dayjs';
 import RemoveIcon from '@mui/icons-material/Remove';
 import AddIcon from '@mui/icons-material/Add';
 import CardContent from '@mui/material/CardContent';
-import Switch from '@mui/material/Switch';
 import {useDebouncedCallback} from 'use-debounce';
-import FormControlLabel from '@mui/material/FormControlLabel';
-import FormGroup from '@mui/material/FormGroup';
 import Toolbar from '@mui/material/Toolbar';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import CloseIcon from '@mui/icons-material/Close';
@@ -34,6 +31,9 @@ import {Measure, Metadata, metadataDtoToDomain} from '../interfaces/metadata';
 import {ErrorDto, QueryResultsDto} from '../interfaces/data';
 import {Query, queryToQueryDto} from '../interfaces/query';
 import ResponseTimes from "components/ProgressBar";
+import { algorithmConfigurations} from 'components/AlgorithmSettings';
+import Button from '@mui/material/Button';
+import TextField from '@mui/material/TextField';
 
 const round = (num: number): number => Math.round((num + Number.EPSILON) * 100) / 100;
 
@@ -46,13 +46,12 @@ const Dashboard = () => {
   const [width, setWidth] = useState<number>(0);
   const [modalHeight, setModalHeight] = useState<number>(400);
   const [modalWidth, setModalWidth] = useState<number>(0);
-  const [accuracy, setAccuracy] = useState<number>(0.95);
 
   const [minDate, setMinDate] = useState<Date | null>(null);
   const [maxDate, setMaxDate] = useState<Date | null>(null);
 
-  const [isFalsePixelsVisible, setIsFalsePixelsVisible] = useState<boolean>(true);
-  const [isMissingPixelsVisible, setIsMissingPixelsVisible] = useState<boolean>(true);
+  // const [isFalsePixelsVisible, setIsFalsePixelsVisible] = useState<boolean>(true);
+  // const [isMissingPixelsVisible, setIsMissingPixelsVisible] = useState<boolean>(true);
 
   const [measures, setMeasures] = useState<Measure[]>([]);
 
@@ -62,6 +61,17 @@ const Dashboard = () => {
 
   const [metadata, setMetadata] = useState<Metadata>();
 
+  const [selectedAlgorithm, setSelectedAlgorithm] = useState<string>('');
+  const [initParams, setInitParams] = useState<Record<string, any>>({});
+
+  const [algorithmInstances, setAlgorithmInstances] = useState<
+    Record<string, { id: string; initParams: Record<string, any> }[]>
+  >({});
+
+  const [isAddingAlgorithm, setIsAddingAlgorithm] = useState<boolean>(false);
+
+  const [queryParams, setQueryParams] = useState<Record<string, Record<string, Record<string, any>>>>({});
+
   // multiple results by algorithm
   const [queryResults, setQueryResults] = useState<Record<string, QueryResultsDto | undefined>>({});
 
@@ -70,23 +80,18 @@ const Dashboard = () => {
 
   // multiple response times by algoirthm
   const [responseTimes, setResponseTimes] = useState<Record<string, number>>({});
-  // algorithms array
-  const [algorithms, setAlgorithms] = useState<string[]>(['MinMaxCache']);
 
   // a dictionary of AbortControllers keyed by algorithm
   const abortControllersRef = useRef<{ [algo: string]: AbortController | null }>({});
 
   const margin = {top: 20, right: 0, bottom: 20, left: 40};
-  const min = 0;
-  const max = 1;
-  const step = 0.01;
 
   const clearMeasures = () => setMeasures([]);
 
   // returning an array of { dataset, query, response }
   const getResponseTimeSeries = (): any[] => {
     const series = [];
-    for (const algo of algorithms) {
+    for (const algo of selectedAlgorithmInstances) {
       const res = queryResults[algo];
       const time = responseTimes[algo];
       if (res && time) {
@@ -187,7 +192,8 @@ const Dashboard = () => {
   };
 
   // pass algorithm also
-  const fetchData = async (algorithm: string, from: Date, to: Date, metadata: Metadata) => {
+  const fetchData = async (instanceId: string, from: Date, to: Date, metadata: Metadata) => {
+    const [algorithm] = instanceId.split('-');
     let fromQuery = from.getTime();
     if (fromQuery < metadata.timeRange.from) {
       fromQuery = metadata.timeRange.from;
@@ -200,11 +206,11 @@ const Dashboard = () => {
       setTo(dayjs(metadata.timeRange.to).toDate());
     }
 
-    if (abortControllersRef.current[algorithm]) {
-      abortControllersRef.current[algorithm]!.abort();
+    if (abortControllersRef.current[instanceId]) {
+      abortControllersRef.current[instanceId]!.abort();
     }
     const controller = new AbortController();
-    abortControllersRef.current[algorithm] = controller;
+    abortControllersRef.current[instanceId] = controller;
 
     setLoading(true);
 
@@ -225,19 +231,24 @@ const Dashboard = () => {
       setWidth(chartWidth);
     }
 
+    const instance = Object.values(algorithmInstances).flat().find((inst) => inst.id === instanceId);
+    const initParams = instance?.initParams || {};
+
     const request: Query = {
       query: {
+        algorithm: {
+          name: algorithm,
+          params: initParams,
+        },
         from: dayjs(fromQuery).toDate(),
         to: dayjs(toQuery).toDate(),
         measures: measures.map(({id}) => id),
-        viewPort: {
-          width: chartWidth - margin.left - margin.right,
-          height: Math.floor(chartHeight / measures.length - margin.bottom - margin.top),
-        },
-        accuracy: accuracy,
+        width: chartWidth - margin.left - margin.right,
+        height: Math.floor(chartHeight / measures.length - margin.bottom - margin.top),
+        schema: schema,
+        table: table,
+        params: queryParams[instanceId] || {},
       },
-      schema: schema,
-      table: table,
     };
 
     let startTime = performance.now();
@@ -253,7 +264,7 @@ const Dashboard = () => {
       }
       setQueryResults((prev) => ({
         ...prev,
-        [algorithm]: queryResults,
+        [instanceId]: queryResults,
       }));
     } catch (error) {
       console.error(error);
@@ -269,7 +280,7 @@ const Dashboard = () => {
     let endTime = performance.now();
     setResponseTimes((prev) => ({
       ...prev,
-      [algorithm]: endTime - startTime,
+      [instanceId]: endTime - startTime,
     }));
   };
 
@@ -292,59 +303,83 @@ const Dashboard = () => {
     setMeasures(selectedObjects ?? []);
   };
 
-  const decreaseAccuracy = () =>
-    setAccuracy((prev) => {
-      if (prev <= min) {
-        return min;
-      }
-      return Math.max(min, +(prev - step).toFixed(2));
-    });
 
-  const increaseAccuracy = () =>
-    setAccuracy((prev) => {
-      if (prev >= max) {
-        return max;
-      }
-      return Math.min(max, +(prev + step).toFixed(2));
-    });
+  const handleAlgorithmSelect = (event: SelectChangeEvent<string>) => {
+    const algorithm = event.target.value;
+    setSelectedAlgorithm(algorithm);
+    // Initialize parameters with default values
+    const defaultParams = algorithmConfigurations[algorithm]?.initParams || {};
+    const initializedParams = Object.keys(defaultParams).reduce((acc, key) => {
+      acc[key] = defaultParams[key].default;
+      return acc;
+    }, {} as Record<string, any>);
+    setInitParams(initializedParams);
+  };
 
-  const handleAccuracyChange = (event: SyntheticEvent | Event, value: number | number[]) => {
-    if (typeof value === 'number') {
-      setAccuracy(value);
+  const handleParamChange = (paramKey: string, value: any) => {
+    const paramConfig = algorithmConfigurations[selectedAlgorithm]?.initParams[paramKey];
+    if (paramConfig?.type === "number") {
+      const parsedValue = parseFloat(value);
+      if (!isNaN(parsedValue) && parsedValue >= (paramConfig.min ?? -Infinity) && parsedValue <= (paramConfig.max ?? Infinity)) {
+        setInitParams((prevParams) => ({
+          ...prevParams,
+          [paramKey]: parsedValue,
+        }));
+      }
+    } else {
+      setInitParams((prevParams) => ({
+        ...prevParams,
+        [paramKey]: value,
+      }));
     }
   };
 
-  const handleAlgorithmChange = (event: SelectChangeEvent<string[]>) => {
-    const {
-      target: { value },
-    } = event;
-    // value is string[] of selected algorithms
-    const newAlgos = typeof value === 'string' ? value.split(',') : value;
+  const handleCancelAddAlgorithm = () => {
+    setSelectedAlgorithm('');
+    setInitParams({});
+    setIsAddingAlgorithm(false);
+  };
 
-   // 1. Remove any old algorithms from queryResultsByAlgorithm
-    setQueryResults((prev) => {
-      const updated = { ...prev };
-      Object.keys(updated).forEach((key) => {
-        if (!newAlgos.includes(key)) {
-          delete updated[key];
-        }
-      });
-      return updated;
-    });
+  const handleAddInstance = () => {
+    if (!selectedAlgorithm) return;
+    const id = `${selectedAlgorithm}-${Date.now()}`;
+    const newInstance = { id, algorithm: selectedAlgorithm, initParams };
+    setAlgorithmInstances((prevInstances) => ({
+      ...prevInstances,
+      [selectedAlgorithm]: [
+        ...(prevInstances[selectedAlgorithm] || []),
+        newInstance,
+      ],
+    }));
+    
+    // Initialize query parameters with default values
+    const defaultQueryParams = algorithmConfigurations[selectedAlgorithm]?.queryParams || {};
+    const initializedQueryParams = Object.keys(defaultQueryParams).reduce((acc, key) => {
+      acc[key] = defaultQueryParams[key].default;
+      return acc;
+    }, {} as Record<string, any>);
+    setQueryParams((prevParams) => ({
+      ...prevParams,
+      [id]: initializedQueryParams,
+    }));
 
-    // 2. Remove any old algorithms from responseTimes
-    setResponseTimes((prev) => {
-      const updated = { ...prev };
-      Object.keys(updated).forEach((key) => {
-        if (!newAlgos.includes(key)) {
-          delete updated[key];
-        }
-      });
-      return updated;
-    });
+    // Add the new instance to the selected algorithm instances
+    setSelectedAlgorithmInstances((prevSelected) => [...prevSelected, id]);
 
-    // 3. Now set the new 'algorithms' state
-    setAlgorithms(newAlgos);
+    // Reset form
+    setSelectedAlgorithm('');
+    setInitParams({});
+    setIsAddingAlgorithm(false);
+  };
+
+  const handleQueryParamChange = (instanceId: string, paramKey: string, value: any) => {
+    setQueryParams((prevParams) => ({
+      ...prevParams,
+      [instanceId]: {
+        ...prevParams[instanceId],
+        [paramKey]: value,
+      },
+    }));
   };
 
   const debouncedFetchAll = useDebouncedCallback(
@@ -354,59 +389,59 @@ const Dashboard = () => {
         await fetchData(algo, from, to, metadata);
       }
     },
-    100
+    300
   );
 
-  const addRect = (
-    {x, y}: { x: number; y: number },
-    color: string,
-    containerHeight: number,
-    svg: any
-  ) => {
-    const cx = Math.floor(x + margin.left + 1 / window.devicePixelRatio);
-    const cy = Math.floor(containerHeight - y);
+  // const addRect = (
+  //   {x, y}: { x: number; y: number },
+  //   color: string,
+  //   containerHeight: number,
+  //   svg: any
+  // ) => {
+  //   const cx = Math.floor(x + margin.left + 1 / window.devicePixelRatio);
+  //   const cy = Math.floor(containerHeight - y);
 
-    const rect = svg
-      .append('rect')
-      .attr('class', 'error-pixel')
-      .attr('x', cx)
-      .attr('y', cy)
-      .attr('width', 1 / window.devicePixelRatio)
-      .attr('height', 1 / window.devicePixelRatio)
-      .style('fill', `${color}`);
+  //   const rect = svg
+  //     .append('rect')
+  //     .attr('class', 'error-pixel')
+  //     .attr('x', cx)
+  //     .attr('y', cy)
+  //     .attr('width', 1 / window.devicePixelRatio)
+  //     .attr('height', 1 / window.devicePixelRatio)
+  //     .style('fill', `${color}`);
 
-    rect
-      .on('mouseover', (elem: SVGRectElement) => {
-        const tooltipGroup = svg.append('g').attr('class', 'tooltip-group');
-        const horizontalOffset = cx > 900 ? -50 : 0;
-        const verticalOffset = cy < 25 ? 50 : -15;
-        const text = tooltipGroup
-          .append('text')
-          .attr('class', 'tooltip')
-          .style('text-anchor', 'middle')
-          .text(`x: ${x}, y: ${y}\ncx: ${cx}, cy: ${cy}`)
-          .attr('fill', 'white')
-          .attr('x', cx + horizontalOffset)
-          .attr('y', cy + verticalOffset);
+  //   rect
+  //     .on('mouseover', (elem: SVGRectElement) => {
+  //       const tooltipGroup = svg.append('g').attr('class', 'tooltip-group');
+  //       const horizontalOffset = cx > 900 ? -50 : 0;
+  //       const verticalOffset = cy < 25 ? 50 : -15;
+  //       const text = tooltipGroup
+  //         .append('text')
+  //         .attr('class', 'tooltip')
+  //         .style('text-anchor', 'middle')
+  //         .text(`x: ${x}, y: ${y}\ncx: ${cx}, cy: ${cy}`)
+  //         .attr('fill', 'white')
+  //         .attr('x', cx + horizontalOffset)
+  //         .attr('y', cy + verticalOffset);
 
-        const bbox = text.node().getBBox();
+  //       const bbox = text.node().getBBox();
 
-        tooltipGroup
-          .insert('rect', 'text')
-          .attr('x', bbox.x - 10)
-          .attr('y', bbox.y - 5)
-          .attr('width', bbox.width + 20)
-          .attr('height', bbox.height + 10)
-          .attr('rx', 5)
-          .attr('ry', 5)
-          .style('fill', 'grey')
-          .style('stroke', 'black')
-          .style('stroke-width', '1px');
-      })
-      .on('mouseout', () => {
-        d3.selectAll('.tooltip-group').remove();
-      });
-  };
+  //       tooltipGroup
+  //         .insert('rect', 'text')
+  //         .attr('x', bbox.x - 10)
+  //         .attr('y', bbox.y - 5)
+  //         .attr('width', bbox.width + 20)
+  //         .attr('height', bbox.height + 10)
+  //         .attr('rx', 5)
+  //         .attr('ry', 5)
+  //         .style('fill', 'grey')
+  //         .style('stroke', 'black')
+  //         .style('stroke-width', '1px');
+  //     })
+  //     .on('mouseout', () => {
+  //       d3.selectAll('.tooltip-group').remove();
+  //     });
+  // };
 
   const renderChart = (
     selector: string,
@@ -559,55 +594,64 @@ const Dashboard = () => {
     svg.call(zoom);
   };
 
-  const renderErrorPixels = (selector: string, error: ErrorDto, height: number) => {
-    const svg = d3.select(selector);
+  // const renderErrorPixels = (selector: string, error: ErrorDto, height: number) => {
+  //   const svg = d3.select(selector);
 
-    if (isFalsePixelsVisible) {
-      pixelArrayToCoordinates(error.falsePixels).map(
-        ({x, y}: { x: number; y: number }, index: number) => {
-          addRect({x, y: y}, 'red', height, svg);
-        }
-      );
-    }
+  //   if (isFalsePixelsVisible) {
+  //     pixelArrayToCoordinates(error.falsePixels).map(
+  //       ({x, y}: { x: number; y: number }, index: number) => {
+  //         addRect({x, y: y}, 'red', height, svg);
+  //       }
+  //     );
+  //   }
 
-    if (isMissingPixelsVisible) {
-      pixelArrayToCoordinates(error.missingPixels).map(
-        ({x, y}: { x: number; y: number }, index: number) => {
-          addRect({x, y: y}, 'orange', height, svg);
-        }
-      );
-    }
+  //   if (isMissingPixelsVisible) {
+  //     pixelArrayToCoordinates(error.missingPixels).map(
+  //       ({x, y}: { x: number; y: number }, index: number) => {
+  //         addRect({x, y: y}, 'orange', height, svg);
+  //       }
+  //     );
+  //   }
 
-    const tooltipGroup = svg.append('g').attr('class', 'info-group');
-    const text = tooltipGroup
-      .append('text')
-      .attr('class', 'info')
-      .style('text-anchor', 'middle')
-      .style('stroke-width', '1px')
-      .attr('font-size', 'smaller')
-      .text(`Error: ${round(error.error * 100)}%`)
-      .attr('x', width - margin.left - margin.right - 10)
-      .attr('y', margin.top + margin.bottom);
+  //   const tooltipGroup = svg.append('g').attr('class', 'info-group');
+  //   const text = tooltipGroup
+  //     .append('text')
+  //     .attr('class', 'info')
+  //     .style('text-anchor', 'middle')
+  //     .style('stroke-width', '1px')
+  //     .attr('font-size', 'smaller')
+  //     .text(`Error: ${round(error.error * 100)}%`)
+  //     .attr('x', width - margin.left - margin.right - 10)
+  //     .attr('y', margin.top + margin.bottom);
 
-    const bbox = text.node()?.getBBox();
+  //   const bbox = text.node()?.getBBox();
 
-    if (!bbox) return;
+  //   if (!bbox) return;
 
-    tooltipGroup
-      .insert('rect', 'text')
-      .attr('x', bbox.x - 10)
-      .attr('y', bbox.y - 5)
-      .attr('width', bbox.width + 20)
-      .attr('height', bbox.height + 10)
-      .style('fill', 'lightgrey')
-      .style('stroke', 'black')
-      .style('stroke-width', '1px');
+  //   tooltipGroup
+  //     .insert('rect', 'text')
+  //     .attr('x', bbox.x - 10)
+  //     .attr('y', bbox.y - 5)
+  //     .attr('width', bbox.width + 20)
+  //     .attr('height', bbox.height + 10)
+  //     .style('fill', 'lightgrey')
+  //     .style('stroke', 'black')
+  //     .style('stroke-width', '1px');
+  // };
+
+  const [selectedAlgorithmInstances, setSelectedAlgorithmInstances] = useState<string[]>([]);
+
+  const handleAlgorithmInstanceChange = (event: SelectChangeEvent<string[]>) => {
+    const {
+      target: { value },
+    } = event;
+    setSelectedAlgorithmInstances(typeof value === 'string' ? value.split(',') : value);
   };
 
   // reset zoom
   useEffect(() => {
     if (!measures.length) return;
-    for (const algo of algorithms) {
+    for (const algo of selectedAlgorithmInstances) {
       const res = queryResults[algo];
       if (!res) continue;
       const series = Object.values(res.data);
@@ -616,22 +660,23 @@ const Dashboard = () => {
         svg.call(d3.zoom().transform, d3.zoomIdentity);
       });
     }
-  }, [queryResults, measures, algorithms]);
+  }, [queryResults, measures, selectedAlgorithmInstances]);
 
   // reset zoom in modal
   useEffect(() => {
     if (selectedChart === null) return;
-    for (const algo of algorithms) {
+    for (const algo of selectedAlgorithmInstances) {
       const svg = d3.select(`#svg_${algo}_${selectedChart}-modal`);
       svg.call(d3.zoom().transform, d3.zoomIdentity);
     }
-  }, [selectedChart, algorithms]);
+  }, [selectedChart, selectedAlgorithmInstances]);
+
 
   // render chart
   useEffect(() => {
     if (!measures.length || !queryResults) return;
 
-    for (const algo of algorithms) {
+    for (const algo of selectedAlgorithmInstances) {
       const res = queryResults[algo];
       if (!res) continue; // skip if not fetched yet
 
@@ -650,18 +695,18 @@ const Dashboard = () => {
     }
   }, [
     queryResults,
-    algorithms,
+    selectedAlgorithmInstances,
     metadata,
     height,
-    isFalsePixelsVisible,
-    isMissingPixelsVisible,
+    // isFalsePixelsVisible,
+    // isMissingPixelsVisible,
   ]);
 
   // render chart in modal
   useEffect(() => {
     if (!measures.length || !queryResults || selectedChart === null) return;
 
-    for (const algo of algorithms) {
+    for (const algo of selectedAlgorithmInstances) {
       const res = queryResults[algo];
       if (!res) continue;
       const series = Object.values(res.data);
@@ -672,19 +717,19 @@ const Dashboard = () => {
           `#svg_${algo}_${selectedChart}-modal`,
           data,
           modalWidth,
-          Math.floor(modalHeight / algorithms.length),
+          Math.floor(modalHeight / selectedAlgorithmInstances.length),
           {from: timeRange.from, to: timeRange.to}
         );
       });
     }
   }, [
     queryResults,
-    algorithms,
+    selectedAlgorithmInstances,
     metadata,
     modalHeight,
-    isFalsePixelsVisible,
-    isMissingPixelsVisible,
     selectedChart,
+    // isFalsePixelsVisible,
+    // isMissingPixelsVisible,
  ]);
 
   // add resize handler for charts
@@ -706,40 +751,44 @@ const Dashboard = () => {
   }, []);
 
   // render error pixels
-  useEffect(() => {
-    if (!queryResults || !measures || selectedChart !== null) return;
+  // useEffect(() => {
+  //   if (!queryResults || !measures || selectedChart !== null) return;
     
-    for (const algo of algorithms) {
-      const res = queryResults[algo];
-      if (!res) continue;
+  //   for (const algo of algorithms) {
+  //     const res = queryResults[algo];
+  //     if (!res) continue;
 
-      const errors = Object.values(res.error);
-      const chartHeight = Math.floor(height / measures.length);
-      const containerHeight = chartHeight - margin.bottom - 1;
+  //     const errors = Object.values(res.error);
+  //     const chartHeight = Math.floor(height / measures.length);
+  //     const containerHeight = chartHeight - margin.bottom - 1;
 
-      errors.forEach((err, index) => {
-        renderErrorPixels(`#svg_${algo}_${index} > g`, err, containerHeight);
-      });
-    }
-  }, [queryResults, metadata, height, isFalsePixelsVisible, isMissingPixelsVisible]);
+  //     errors.forEach((err, index) => {
+  //       renderErrorPixels(`#svg_${algo}_${index} > g`, err, containerHeight);
+  //     });
+  //   }
+  // }, [queryResults, metadata, height,
+  //    isFalsePixelsVisible, isMissingPixelsVisible
+  //   ]);
 
   // render error pixels in modal
-  useEffect(() => {
-    if (!queryResults || !measures || selectedChart === null) return;
+  // useEffect(() => {
+  //   if (!queryResults || !measures || selectedChart === null) return;
 
-    for (const algo of algorithms) {
-      const res = queryResults[algo];
-      if (!res) continue;
-      const err = res.error[selectedChart];
-      const chartHeight = Math.floor(modalHeight / algorithms.length);
-      const containerHeight = chartHeight - margin.top;
-      renderErrorPixels(
-        `#svg_${algo}_${selectedChart}-modal > g`,
-        err,
-        containerHeight
-      );
-    }
-  }, [queryResults, metadata, height, isFalsePixelsVisible, isMissingPixelsVisible]);
+  //   for (const algo of algorithms) {
+  //     const res = queryResults[algo];
+  //     if (!res) continue;
+  //     const err = res.error[selectedChart];
+  //     const chartHeight = Math.floor(modalHeight / algorithms.length);
+  //     const containerHeight = chartHeight - margin.top;
+  //     renderErrorPixels(
+  //       `#svg_${algo}_${selectedChart}-modal > g`,
+  //       err,
+  //       containerHeight
+  //     );
+  //   }
+  // }, [queryResults, metadata, height, 
+  //   isFalsePixelsVisible, isMissingPixelsVisible
+  // ]);
 
   // fetch metadata
   useEffect(() => {
@@ -751,21 +800,19 @@ const Dashboard = () => {
     if (!metadata || !from || !to || !measures.length) {
       return;
     }
-    debouncedFetchAll(algorithms, from, to, metadata);
+    debouncedFetchAll(selectedAlgorithmInstances, from, to, metadata);
   }, [
     from,
     to,
-    algorithms,
+    selectedAlgorithmInstances,
     metadata,
     measures,
     height,
     width,
     schema,
     table,
-    accuracy,
     selectedChart,
   ]);
-
 
   return (
     <Box sx={{flexGrow: 1}}>
@@ -814,56 +861,6 @@ const Dashboard = () => {
                         }}
                       />
                     </Grid>
-                    <Grid size={12}>
-                      <Box
-                        display={'flex'}
-                        flexDirection={'column'}
-                        justifyContent={'space-between'}
-                        flexGrow={2}
-                      >
-                        <Typography variant="body1" gutterBottom>
-                          Accuracy: {accuracy}
-                        </Typography>
-                        <Box
-                          display={'flex'}
-                          flexDirection={'row'}
-                          alignItems={'center'}
-                          justifyContent={'space-between'}
-                          gap={1}
-                        >
-                          <IconButton
-                            aria-label="decrease accuracy"
-                            size="small"
-                            color={'primary'}
-                            onClick={decreaseAccuracy}
-                            disabled={accuracy <= min || loading}
-                          >
-                            <RemoveIcon fontSize="inherit"/>
-                          </IconButton>
-                          <Slider
-                            onChange={handleAccuracyChange}
-                            value={accuracy}
-                            disabled={loading}
-                            min={min}
-                            max={max}
-                            step={step}
-                            shiftStep={step}
-                            size="small"
-                            aria-label="Accuracy"
-                            valueLabelDisplay="auto"
-                          />
-                          <IconButton
-                            aria-label="increase accuracy"
-                            size="small"
-                            color={'primary'}
-                            onClick={increaseAccuracy}
-                            disabled={accuracy >= max || loading}
-                          >
-                            <AddIcon fontSize="inherit"/>
-                          </IconButton>
-                        </Box>
-                      </Box>
-                    </Grid>
                   </Grid>
                 </Grid>
                 <Grid size={12}>
@@ -911,59 +908,132 @@ const Dashboard = () => {
                   </Select>
                 </Grid>
                 <Grid size={12}>
-                  <Typography variant="overline">Error pixels</Typography>
-                  <FormGroup row>
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          value={isFalsePixelsVisible}
-                          defaultChecked
-                          color="error"
-                          size="small"
-                          onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-                            setIsFalsePixelsVisible(event.target.checked)
-                          }
-                        />
-                      }
-                      label="False pixels"
-                    />
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          value={isMissingPixelsVisible}
-                          defaultChecked
-                          color="warning"
-                          size="small"
-                          onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-                            setIsMissingPixelsVisible(event.target.checked)
-                          }
-                        />
-                      }
-                      label="Missing pixels"
-                    />
-                  </FormGroup>
+                  <Typography variant="overline">Algorithm Instances</Typography>
+                  <Box display="flex" alignItems="center">
+                    <Select
+                      multiple
+                      fullWidth
+                      size="small"
+                      value={selectedAlgorithmInstances}
+                      onChange={handleAlgorithmInstanceChange}
+                      renderValue={(selected) => (
+                        <div>
+                          {(selected as string[]).map((value) => (
+                            <Chip key={value} label={value} style={{ margin: 2 }} />
+                          ))}
+                        </div>
+                      )}
+                      disabled={Object.values(algorithmInstances).flat().length === 0} // Disable if no instances are added
+                    >
+                      {Object.values(algorithmInstances).flat().map((instance) => (
+                        <MenuItem key={instance.id} value={instance.id}>
+                          {instance.id}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    <IconButton
+                      size="small"
+                      color="primary"
+                      onClick={() => setIsAddingAlgorithm(!isAddingAlgorithm)}
+                    >
+                      {isAddingAlgorithm ? <RemoveIcon /> : <AddIcon />}
+                    </IconButton>
+                  </Box>
+                  {isAddingAlgorithm && (
+                    <Box mt={2}>
+                      <Select
+                        fullWidth
+                        size="small"
+                        value={selectedAlgorithm}
+                        onChange={handleAlgorithmSelect}
+                        displayEmpty
+                      >
+                        <MenuItem value="" disabled>
+                          Select Algorithm
+                        </MenuItem>
+                        {Object.keys(algorithmConfigurations).map((algorithm) => (
+                          <MenuItem key={algorithm} value={algorithm}>
+                            {algorithm}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                      {selectedAlgorithm && (
+                        <Box mt={2}>
+                          <Typography variant="subtitle2">Initialization Parameters</Typography>
+                          {Object.keys(initParams).map((paramKey) => {
+                            const paramConfig = algorithmConfigurations[selectedAlgorithm]?.initParams[paramKey];
+                            return (
+                              <TextField
+                                key={paramKey}
+                                label={paramConfig?.label}
+                                value={initParams[paramKey]}
+                                onChange={(e) => handleParamChange(paramKey, e.target.value)}
+                                fullWidth
+                                size="small"
+                                type={paramConfig?.type === "number" ? "number" : "text"}
+                                inputProps={{
+                                  step: paramConfig?.step,
+                                  min: paramConfig?.min,
+                                  max: paramConfig?.max,
+                                }}
+                                sx={{ mb: 1 }}
+                              />
+                            );
+                          })}
+                          <Box display="flex" justifyContent="space-between">
+                            <Button
+                              variant="contained"
+                              color="primary"
+                              size="small"
+                              onClick={handleAddInstance}
+                            >
+                              Save
+                            </Button>
+                            <Button
+                              variant="outlined"
+                              color="secondary"
+                              size="small"
+                              onClick={handleCancelAddAlgorithm}
+                            >
+                              Cancel
+                            </Button>
+                          </Box>
+                        </Box>
+                      )}
+                    </Box>
+                  )}
                 </Grid>
                 <Grid size={12}>
-                <Typography variant="overline">Algorithms</Typography>
-                <Select
-                    multiple
-                    fullWidth
-                    size="small"
-                    value={algorithms}
-                    onChange={handleAlgorithmChange}
-                    renderValue={(selected) => (
-                      <div>
-                        {(selected as string[]).map((val) => (
-                          <Chip key={val} label={val} style={{ margin: 2 }} />
-                        ))}
-                      </div>
-                    )}
-                  >
-                    {/* You can list more algorithms here */}
-                    <MenuItem value="MinMaxCache">MinMaxCache</MenuItem>
-                    <MenuItem value="M4">M4</MenuItem>
-                    {/* Add more as needed */}
-                  </Select>
+                  <Typography variant="overline">Query Parameters</Typography>
+                  {selectedAlgorithmInstances.map((instanceId) => {
+                    const [algorithm] = instanceId.split('-');
+                    const params = algorithmConfigurations[algorithm]?.queryParams || {};
+                    return (
+                      <Box key={instanceId} mt={2}>
+                        <Typography variant="subtitle2">{instanceId}</Typography>
+                        {Object.keys(params).map((paramKey) => {
+                          const paramConfig = params[paramKey];
+                          return (
+                            <TextField
+                              key={paramKey}
+                              label={paramConfig.label}
+                              value={queryParams[instanceId]?.[paramKey] || paramConfig.default}
+                              onChange={(e) => handleQueryParamChange(instanceId, paramKey, e.target.value)}
+                              fullWidth
+                              size="small"
+                              type={paramConfig.type === "number" ? "number" : "text"}
+                              inputProps={{
+                                step: paramConfig.step,
+                                min: paramConfig.min,
+                                max: paramConfig.max,
+                              }}
+                              sx={{ mb: 1 }}
+                            />
+                          );
+                        })}
+                      </Box>
+                    );
+                  })}
                 </Grid>
                 {!!Object.keys(responseTimes).length && (
                   <Grid size={12}>
@@ -983,6 +1053,14 @@ const Dashboard = () => {
                 <CardContent id="chart-content">
                   <Typography sx={{color: 'text.secondary', fontSize: 14, textAlign: 'center'}}>
                     Select at least one measure to display
+                  </Typography>
+                </CardContent>
+              </Card>
+            ) : selectedAlgorithmInstances.length === 0 ? (
+              <Card variant="outlined">
+                <CardContent id="chart-content">
+                  <Typography sx={{color: 'text.secondary', fontSize: 14, textAlign: 'center'}}>
+                    Select or create an instance of an algorithm to display charts
                   </Typography>
                 </CardContent>
               </Card>
@@ -1025,15 +1103,15 @@ const Dashboard = () => {
                         <OpenInFullIcon fontSize={'small'} />
                       </IconButton>
                     </Box>
-
-                    {/* For each selected algorithm, display a sub-chart for this measure */}
-                    {algorithms.map((algo) => {
-                      const algoResult = queryResults[algo];
+                    
+                    {/* For each selected algorithm instance, display a sub-chart for this measure */}
+                    {selectedAlgorithmInstances.map((instanceId) => {
+                      const algoResult = queryResults[instanceId];
                       // If there's no data yet for that algorithm, just show a loader or placeholder
                       if (!algoResult) {
                         return (
                           <Box
-                            key={`chart_${algo}_${measureIndex}`}
+                            key={`chart_${instanceId}_${measureIndex}`}
                             height={Math.floor(height / measures.length)}
                             display="flex"
                             alignItems="center"
@@ -1049,21 +1127,21 @@ const Dashboard = () => {
                                   textAlign: 'center',
                                 }}
                               >
-                                No data for {algo}
+                                No data for {instanceId}
                               </Typography>
                             )}
                           </Box>
                         );
                       }
                       return (
-                        <Box key={`chart_${algo}_${measureIndex}`} position="relative">
+                        <Box key={`chart_${instanceId}_${measureIndex}`} position="relative">
                           {/* Algorithm label */}
                           <Typography variant="caption" sx={{ ml: 2 }}>
-                            {algo}
+                            {instanceId}
                           </Typography>
                           {/* The actual chart */}
                           <svg
-                            id={`svg_${algo}_${measureIndex}`}
+                            id={`svg_${instanceId}_${measureIndex}`}
                             width={width}
                             height={Math.floor(height / measures.length)}
                           />
@@ -1113,12 +1191,12 @@ const Dashboard = () => {
             id="chart-content-modal"
           >
             {selectedChart !== null &&
-              algorithms.map((algo) => (
+              selectedAlgorithmInstances.map((instanceId) => (
                 <svg
-                  key={`svg_${algo}_${selectedChart}-modal`}
-                  id={`svg_${algo}_${selectedChart}-modal`}
+                  key={`svg_${instanceId}_${selectedChart}-modal`}
+                  id={`svg_${instanceId}_${selectedChart}-modal`}
                   width={modalWidth}
-                  height={modalHeight / algorithms.length}
+                  height={modalHeight / selectedAlgorithmInstances.length}
                 />
               ))}
           </Box>

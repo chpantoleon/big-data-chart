@@ -1,31 +1,35 @@
 export interface QueryDto {
   query: {
+    algorithm: {
+      name: string,
+      params: any,
+    },
     from: number,
     to: number,
     measures: number[],
-    viewPort: {
-      width: number,
-      height: number
-    },
-    accuracy: number
+    width: number,
+    height: number  
+    schema: string,
+    table: string,
+    params: any,
   },
-  schema: string,
-  table: string
 }
 
 export interface Query {
   query: {
+    algorithm: {
+      name: string,
+      params: any,
+    },
     from: Date,
     to: Date,
     measures: number[],
-    viewPort: {
-      width: number,
-      height: number
-    },
-    accuracy: number
+    width: number,
+    height: number,
+    schema: string,
+    table: string,
+    params: any,
   },
-  schema: string,
-  table: string
 }
 
 export const queryToQueryDto = (query: Query): QueryDto => {
@@ -35,7 +39,6 @@ export const queryToQueryDto = (query: Query): QueryDto => {
       ...query.query,
       from: query.query.from.getTime(),
       to: query.query.to.getTime(),
-      accuracy: +(query.query.accuracy).toFixed(2)
     }
   }
 }
