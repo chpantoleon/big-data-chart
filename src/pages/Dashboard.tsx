@@ -1,7 +1,6 @@
 import {MouseEvent, SyntheticEvent, useEffect, useState, useRef} from 'react';
 import * as d3 from 'd3';
 import Box from '@mui/material/Box';
-import Slider from '@mui/material/Slider';
 import Chip from '@mui/material/Chip';
 import Select, {SelectChangeEvent} from '@mui/material/Select';
 import Grid from '@mui/material/Grid2';
@@ -28,10 +27,10 @@ import Dialog from '@mui/material/Dialog';
 import CircularProgress from '@mui/material/CircularProgress';
 
 import {Measure, Metadata, metadataDtoToDomain} from '../interfaces/metadata';
-import {ErrorDto, QueryResultsDto} from '../interfaces/data';
+import {QueryResultsDto} from '../interfaces/data';
 import {Query, queryToQueryDto} from '../interfaces/query';
-import ResponseTimes from "components/ProgressBar";
-import { algorithmConfigurations} from 'components/AlgorithmSettings';
+import ResponseTimes from "components/ResponseTimes";
+import { methodConfigurations} from 'components/MethodSettings';
 import Button from '@mui/material/Button';
 import TextField from '@mui/material/TextField';
 
@@ -61,27 +60,27 @@ const Dashboard = () => {
 
   const [metadata, setMetadata] = useState<Metadata>();
 
-  const [selectedAlgorithm, setSelectedAlgorithm] = useState<string>('');
+  const [selectedMethod, setSelectedMethod] = useState<string>('');
   const [initParams, setInitParams] = useState<Record<string, any>>({});
 
-  const [algorithmInstances, setAlgorithmInstances] = useState<
-    Record<string, { id: string; initParams: Record<string, any> }[]>
+  const [methodInstances, setMethodInstances] = useState<
+    Record<string, { id: string; method: string, initParams: Record<string, any> }[]>
   >({});
 
-  const [isAddingAlgorithm, setIsAddingAlgorithm] = useState<boolean>(false);
+  const [isAddingMethod, setIsAddingMethod] = useState<boolean>(false);
 
   const [queryParams, setQueryParams] = useState<Record<string, Record<string, Record<string, any>>>>({});
 
-  // multiple results by algorithm
+  // multiple results by method
   const [queryResults, setQueryResults] = useState<Record<string, QueryResultsDto | undefined>>({});
 
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [selectedChart, setSelectedChart] = useState<number | null>(null);
 
   // multiple response times by algoirthm
-  const [responseTimes, setResponseTimes] = useState<Record<string, number>>({});
+  const [responseTimes, setResponseTimes] = useState<Record<string, { total: number; rendering: number }>>({});
 
-  // a dictionary of AbortControllers keyed by algorithm
+  // a dictionary of AbortControllers keyed by method
   const abortControllersRef = useRef<{ [algo: string]: AbortController | null }>({});
 
   const margin = {top: 20, right: 0, bottom: 20, left: 40};
@@ -91,21 +90,48 @@ const Dashboard = () => {
   // returning an array of { dataset, query, response }
   const getResponseTimeSeries = (): any[] => {
     const series = [];
-    for (const algo of selectedAlgorithmInstances) {
+    for (const algo of selectedMethodInstances) {
       const res = queryResults[algo];
       const time = responseTimes[algo];
       if (res && time) {
+        const queryTime = (res.queryTime || 0) * 1000;
+        const renderingTime =  time.rendering;
+        const networkingTime = time.total - renderingTime - queryTime;
         series.push({
-          dataset: algo,
-          // If queryTime is in seconds, multiply by 1000 to get ms
-          query: (res.queryTime || 0) * 1000,
-          response: time,
+          dataset: formatInstanceId(algo),
+          query: queryTime,
+          rendering: renderingTime,
+          networking: networkingTime,
         });
       }
     }
     return series;
   };
 
+  const existingInitializationParameters = (method: string): boolean => {
+    return Boolean(
+      methodInstances[selectedMethod].find(
+        (inst) => JSON.stringify(inst.initParams) === JSON.stringify(initParams)
+      )
+    );
+  }
+
+  const existingQueryParams = (): boolean => {
+    return selectedMethodInstances.some((instanceId) => {
+      const [method] = instanceId.split('-');
+      return hasQueryParameters(method);
+    });
+  };
+
+
+  const hasConfigParameters = (method: string): boolean => {  
+    return methodConfigurations[method]?.initParams && Object.keys(methodConfigurations[method]?.initParams).length > 0;
+  }
+  
+  const hasQueryParameters = (method: string): boolean => {  
+    return methodConfigurations[method]?.queryParams && Object.keys(methodConfigurations[method]?.queryParams).length > 0;
+  }
+  
   const pixelArrayToCoordinates = (pixelArray: string[][]): { x: number; y: number }[] =>
     pixelArray
       .map((range, index) => {
@@ -191,9 +217,9 @@ const Dashboard = () => {
     }
   };
 
-  // pass algorithm also
+  // pass method also
   const fetchData = async (instanceId: string, from: Date, to: Date, metadata: Metadata) => {
-    const [algorithm] = instanceId.split('-');
+    const [method] = instanceId.split('-');
     let fromQuery = from.getTime();
     if (fromQuery < metadata.timeRange.from) {
       fromQuery = metadata.timeRange.from;
@@ -213,8 +239,9 @@ const Dashboard = () => {
     abortControllersRef.current[instanceId] = controller;
 
     setLoading(true);
+    setLoadingCharts((prev) => ({ ...prev, [instanceId]: true }));
 
-    let chartWidth;
+    let chartWidth = width;
     let chartHeight = height;
 
     if (isModalOpen) {
@@ -231,13 +258,13 @@ const Dashboard = () => {
       setWidth(chartWidth);
     }
 
-    const instance = Object.values(algorithmInstances).flat().find((inst) => inst.id === instanceId);
+    const instance = Object.values(methodInstances).flat().find((inst) => inst.id === instanceId);
     const initParams = instance?.initParams || {};
 
     const request: Query = {
       query: {
-        algorithm: {
-          name: algorithm,
+        methodConfig: {
+          key: instanceId,
           params: initParams,
         },
         from: dayjs(fromQuery).toDate(),
@@ -266,6 +293,28 @@ const Dashboard = () => {
         ...prev,
         [instanceId]: queryResults,
       }));
+
+      let renderStartTime = performance.now();
+      const series = Object.values(queryResults.data);
+      const timeRange = queryResults.timeRange;
+      series.forEach((data, index) => {
+        renderChart(
+          `#svg_${instanceId}_${index}`,
+          data,
+          chartWidth,
+          Math.floor(chartHeight / measures.length),
+          {from: timeRange.from, to: timeRange.to}
+        );
+      });
+      let renderEndTime = performance.now();
+
+      setResponseTimes((prev) => ({
+        ...prev,
+        [instanceId]: {
+          total: renderEndTime - startTime,
+          rendering: renderEndTime - renderStartTime,
+        },
+      }));
     } catch (error) {
       console.error(error);
       if (axios.isCancel(error)) {
@@ -275,19 +324,11 @@ const Dashboard = () => {
         throw error; // Re-throw other errors
       }
     } finally {
+      setLoadingCharts((prev) => ({ ...prev, [instanceId]: false }));
       setLoading(false);
     }
-    let endTime = performance.now();
-    setResponseTimes((prev) => ({
-      ...prev,
-      [instanceId]: endTime - startTime,
-    }));
   };
 
-  const handleTableChange = (event: MouseEvent<HTMLElement>, table: string) => {
-    setTable(table);
-    clearMeasures();
-  };
 
   const handleSelectMeasures = (event: SelectChangeEvent<string[]>) => {
     const {
@@ -303,12 +344,16 @@ const Dashboard = () => {
     setMeasures(selectedObjects ?? []);
   };
 
+  const handleTableChange = (event: MouseEvent<HTMLElement>, table: string) => {
+    setTable(table);
+    clearMeasures();
+  };
 
-  const handleAlgorithmSelect = (event: SelectChangeEvent<string>) => {
-    const algorithm = event.target.value;
-    setSelectedAlgorithm(algorithm);
+  const handleMethodSelect = (event: SelectChangeEvent<string>) => {
+    const method = event.target.value;
+    setSelectedMethod(method);
     // Initialize parameters with default values
-    const defaultParams = algorithmConfigurations[algorithm]?.initParams || {};
+    const defaultParams = methodConfigurations[method]?.initParams || {};
     const initializedParams = Object.keys(defaultParams).reduce((acc, key) => {
       acc[key] = defaultParams[key].default;
       return acc;
@@ -317,7 +362,7 @@ const Dashboard = () => {
   };
 
   const handleParamChange = (paramKey: string, value: any) => {
-    const paramConfig = algorithmConfigurations[selectedAlgorithm]?.initParams[paramKey];
+    const paramConfig = methodConfigurations[selectedMethod]?.initParams[paramKey];
     if (paramConfig?.type === "number") {
       const parsedValue = parseFloat(value);
       if (!isNaN(parsedValue) && parsedValue >= (paramConfig.min ?? -Infinity) && parsedValue <= (paramConfig.max ?? Infinity)) {
@@ -334,26 +379,34 @@ const Dashboard = () => {
     }
   };
 
-  const handleCancelAddAlgorithm = () => {
-    setSelectedAlgorithm('');
+  const handleCancelAddMethod = () => {
+    setSelectedMethod('');
     setInitParams({});
-    setIsAddingAlgorithm(false);
+    setIsAddingMethod(false);
   };
 
   const handleAddInstance = () => {
-    if (!selectedAlgorithm) return;
-    const id = `${selectedAlgorithm}-${Date.now()}`;
-    const newInstance = { id, algorithm: selectedAlgorithm, initParams };
-    setAlgorithmInstances((prevInstances) => ({
+    if (!selectedMethod) return;
+
+    const id = `${selectedMethod}-${Date.now()}`;
+    const newInstance = { id, method: selectedMethod, initParams };
+
+    const alreadyExists = methodInstances[selectedMethod] && existingInitializationParameters(selectedMethod);
+
+    if (alreadyExists) {
+      alert('Instance already exists');
+      return;
+    }
+    setMethodInstances((prevInstances) => ({
       ...prevInstances,
-      [selectedAlgorithm]: [
-        ...(prevInstances[selectedAlgorithm] || []),
+      [selectedMethod]: [
+        ...(prevInstances[selectedMethod] || []),
         newInstance,
       ],
     }));
-    
+
     // Initialize query parameters with default values
-    const defaultQueryParams = algorithmConfigurations[selectedAlgorithm]?.queryParams || {};
+    const defaultQueryParams = methodConfigurations[selectedMethod]?.queryParams || {};
     const initializedQueryParams = Object.keys(defaultQueryParams).reduce((acc, key) => {
       acc[key] = defaultQueryParams[key].default;
       return acc;
@@ -363,13 +416,13 @@ const Dashboard = () => {
       [id]: initializedQueryParams,
     }));
 
-    // Add the new instance to the selected algorithm instances
-    setSelectedAlgorithmInstances((prevSelected) => [...prevSelected, id]);
+    // Add the new instance to the selected method instances
+    setSelectedMethodInstances((prevSelected) => [...prevSelected, id]);
 
     // Reset form
-    setSelectedAlgorithm('');
+    setSelectedMethod('');
     setInitParams({});
-    setIsAddingAlgorithm(false);
+    setIsAddingMethod(false);
   };
 
   const handleQueryParamChange = (instanceId: string, paramKey: string, value: any) => {
@@ -384,7 +437,7 @@ const Dashboard = () => {
 
   const debouncedFetchAll = useDebouncedCallback(
     async (algos: string[], from, to, metadata) => {
-      // Loop over each algorithm in sequence
+      // Loop over each method in sequence
       for (const algo of algos) {
         await fetchData(algo, from, to, metadata);
       }
@@ -449,7 +502,9 @@ const Dashboard = () => {
     width: number,
     height: number,
     timeRange: { from: number; to: number }
-  ) => {
+  ): number => {
+    const renderStartTime = performance.now();
+  
     const containerWidth = width - margin.left - margin.right;
 
     const svg = d3.select(selector);
@@ -592,6 +647,10 @@ const Dashboard = () => {
       });
 
     svg.call(zoom);
+
+    const renderEndTime = performance.now();
+    const renderTime = renderEndTime - renderStartTime;
+    return renderTime;
   };
 
   // const renderErrorPixels = (selector: string, error: ErrorDto, height: number) => {
@@ -639,19 +698,30 @@ const Dashboard = () => {
   //     .style('stroke-width', '1px');
   // };
 
-  const [selectedAlgorithmInstances, setSelectedAlgorithmInstances] = useState<string[]>([]);
+  const [selectedMethodInstances, setSelectedMethodInstances] = useState<string[]>([]);
+  const [loadingCharts, setLoadingCharts] = useState<Record<string, boolean>>({});
 
-  const handleAlgorithmInstanceChange = (event: SelectChangeEvent<string[]>) => {
+  const formatInstanceId = (instanceId: string) => {
+    const [method, timestamp] = instanceId.split('-');
+
+    if(!hasConfigParameters(method)){
+      return `${method}`;
+    }
+    const instanceNumber = (methodInstances[method] || []).findIndex(inst => inst.id === instanceId) + 1;
+    return `${method}-${instanceNumber}`;
+  };
+
+  const handleMethodInstanceChange = (event: SelectChangeEvent<string[]>) => {
     const {
       target: { value },
     } = event;
-    setSelectedAlgorithmInstances(typeof value === 'string' ? value.split(',') : value);
+    setSelectedMethodInstances(typeof value === 'string' ? value.split(',') : value);
   };
 
   // reset zoom
   useEffect(() => {
     if (!measures.length) return;
-    for (const algo of selectedAlgorithmInstances) {
+    for (const algo of selectedMethodInstances) {
       const res = queryResults[algo];
       if (!res) continue;
       const series = Object.values(res.data);
@@ -660,42 +730,53 @@ const Dashboard = () => {
         svg.call(d3.zoom().transform, d3.zoomIdentity);
       });
     }
-  }, [queryResults, measures, selectedAlgorithmInstances]);
+  }, [queryResults, measures, selectedMethodInstances]);
 
   // reset zoom in modal
   useEffect(() => {
     if (selectedChart === null) return;
-    for (const algo of selectedAlgorithmInstances) {
+    for (const algo of selectedMethodInstances) {
       const svg = d3.select(`#svg_${algo}_${selectedChart}-modal`);
       svg.call(d3.zoom().transform, d3.zoomIdentity);
     }
-  }, [selectedChart, selectedAlgorithmInstances]);
+  }, [selectedChart, selectedMethodInstances]);
 
 
   // render chart
   useEffect(() => {
     if (!measures.length || !queryResults) return;
 
-    for (const algo of selectedAlgorithmInstances) {
+    const newResponseTimes = { ...responseTimes };
+
+    for (const algo of selectedMethodInstances) {
       const res = queryResults[algo];
       if (!res) continue; // skip if not fetched yet
 
       const series = Object.values(res.data);
       const timeRange = res.timeRange;
+      let totalRenderTime = 0;
+
       // For each measure index, we have series[index]
       series.forEach((data, index) => {
-        renderChart(
+        const renderTime = renderChart(
           `#svg_${algo}_${index}`,
           data,
           width,
           Math.floor(height / measures.length),
           {from: timeRange.from, to: timeRange.to}
         );
+        totalRenderTime += renderTime;
       });
+
+      newResponseTimes[algo] = {
+        ...newResponseTimes[algo],
+        rendering: totalRenderTime,
+      };
     }
+    setResponseTimes(newResponseTimes);
   }, [
     queryResults,
-    selectedAlgorithmInstances,
+    selectedMethodInstances,
     metadata,
     height,
     // isFalsePixelsVisible,
@@ -706,30 +787,42 @@ const Dashboard = () => {
   useEffect(() => {
     if (!measures.length || !queryResults || selectedChart === null) return;
 
-    for (const algo of selectedAlgorithmInstances) {
+    const newResponseTimes = { ...responseTimes };
+
+    for (const algo of selectedMethodInstances) {
       const res = queryResults[algo];
       if (!res) continue;
       const series = Object.values(res.data);
       const timeRange = res.timeRange;
+      let totalRenderTime = 0;
+
       // For each measure index, we have series[index]
       series.forEach((data, index) => {
-        renderChart(
+        const renderTime = renderChart(
           `#svg_${algo}_${selectedChart}-modal`,
           data,
           modalWidth,
-          Math.floor(modalHeight / selectedAlgorithmInstances.length),
+          Math.floor(modalHeight / selectedMethodInstances.length),
           {from: timeRange.from, to: timeRange.to}
         );
+        totalRenderTime += renderTime;
       });
+
+      newResponseTimes[algo] = {
+        ...newResponseTimes[algo],
+        rendering: totalRenderTime,
+      };
     }
+
+    setResponseTimes(newResponseTimes);
   }, [
     queryResults,
-    selectedAlgorithmInstances,
+    selectedMethodInstances,
     metadata,
     modalHeight,
     selectedChart,
     // isFalsePixelsVisible,
-    // isMissingPixelsVisible,
+    // isMissingPixelsVisible
  ]);
 
   // add resize handler for charts
@@ -754,7 +847,7 @@ const Dashboard = () => {
   // useEffect(() => {
   //   if (!queryResults || !measures || selectedChart !== null) return;
     
-  //   for (const algo of algorithms) {
+  //   for (const algo of methods) {
   //     const res = queryResults[algo];
   //     if (!res) continue;
 
@@ -774,11 +867,11 @@ const Dashboard = () => {
   // useEffect(() => {
   //   if (!queryResults || !measures || selectedChart === null) return;
 
-  //   for (const algo of algorithms) {
+  //   for (const algo of methods) {
   //     const res = queryResults[algo];
   //     if (!res) continue;
   //     const err = res.error[selectedChart];
-  //     const chartHeight = Math.floor(modalHeight / algorithms.length);
+  //     const chartHeight = Math.floor(modalHeight / methods.length);
   //     const containerHeight = chartHeight - margin.top;
   //     renderErrorPixels(
   //       `#svg_${algo}_${selectedChart}-modal > g`,
@@ -800,11 +893,11 @@ const Dashboard = () => {
     if (!metadata || !from || !to || !measures.length) {
       return;
     }
-    debouncedFetchAll(selectedAlgorithmInstances, from, to, metadata);
+    debouncedFetchAll(selectedMethodInstances, from, to, metadata);
   }, [
     from,
     to,
-    selectedAlgorithmInstances,
+    selectedMethodInstances,
     metadata,
     measures,
     height,
@@ -813,7 +906,7 @@ const Dashboard = () => {
     table,
     selectedChart,
   ]);
-
+  
   return (
     <Box sx={{flexGrow: 1}}>
       <AppBar position="relative">
@@ -864,7 +957,7 @@ const Dashboard = () => {
                   </Grid>
                 </Grid>
                 <Grid size={12}>
-                  <Typography variant="overline">Table</Typography>
+                  <Typography variant="overline">Dataset</Typography>
                   <List component="nav" aria-label="table">
                     <ListItemButton
                       dense
@@ -883,6 +976,125 @@ const Dashboard = () => {
                       <ListItemText primary="manufacturing_exp"/>
                     </ListItemButton>
                   </List>
+                </Grid>
+                <Grid size={12}>
+                  <Typography variant="overline">Method Instances</Typography>
+                  <Box display="flex" alignItems="center">
+                    <Select
+                      multiple
+                      fullWidth
+                      size="small"
+                      value={selectedMethodInstances}
+                      onChange={handleMethodInstanceChange}
+                      renderValue={(selected) => (
+                        <Box display="flex" flexWrap="wrap" gap={1}>
+                          {(selected as string[]).map((value) => {
+                            const instance = methodInstances[selectedMethod]?.find(inst => inst.id === value);
+                            return (
+                              <Chip
+                                key={value}
+                                label={formatInstanceId(value)}
+                                style={{ margin: 2 }}
+                              />
+                            );
+                          })}
+                        </Box>
+                      )}
+                      disabled={Object.values(methodInstances).flat().length === 0} // Disable if no instances are added
+                      MenuProps={{
+                        PaperProps: {
+                          style: {
+                            maxHeight: 48 * 4.5 + 8,
+                            width: 250,
+                          },
+                        },
+                      }}
+                    >
+                      {Object.values(methodInstances).flat().map((instance) => (
+                        <MenuItem key={instance.id} value={instance.id}>
+                          <Box display="flex" flexDirection="column">
+                            <Typography variant="body2">{formatInstanceId(instance.id)}</Typography>
+                            <Typography variant="caption" color="textSecondary">
+                              {Object.entries(instance.initParams).map(([key, value]) => (
+                                <span key={key}>{`${key}: ${value},`}</span>
+                              ))}
+                            </Typography>
+                          </Box>
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    <IconButton
+                      size="small"
+                      color="primary"
+                      onClick={() => setIsAddingMethod(!isAddingMethod)}
+                    >
+                      {isAddingMethod ? <RemoveIcon /> : <AddIcon />}
+                    </IconButton>
+                  </Box>
+                  {isAddingMethod && (
+                    <Box mt={2}>
+                        <Typography variant="subtitle2">Method</Typography>
+                        <Select
+                          fullWidth
+                          size="small"
+                          value={selectedMethod}
+                          onChange={handleMethodSelect}
+                          displayEmpty
+                        >
+                          <MenuItem value="" disabled>
+                            Select Method
+                          </MenuItem>
+                          {Object.keys(methodConfigurations).map((method) => (
+                            <MenuItem key={method} value={method}>
+                              {method}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                        {selectedMethod &&  (
+                          <Box mt={2}>
+                            {hasConfigParameters(selectedMethod) && <Typography variant="subtitle2">Initialization Parameters</Typography>}
+                            {Object.keys(initParams).map((paramKey) => {
+                              const paramConfig = methodConfigurations[selectedMethod]?.initParams[paramKey];
+                              return (
+                                <TextField
+                                  key={paramKey}
+                                  label={paramConfig?.label}
+                                  value={initParams[paramKey]}
+                                  onChange={(e) => handleParamChange(paramKey, e.target.value)}
+                                  fullWidth
+                                  size="small"
+                                  type={paramConfig?.type === "number" ? "number" : "text"}
+                                  inputProps={{
+                                    step: paramConfig?.step,
+                                    min: paramConfig?.min,
+                                    max: paramConfig?.max,
+                                  }}
+                                  sx={{ mb: 1, mt: 1 }}
+                                />
+                              );
+                            })}
+                            <Box display="flex" justifyContent="space-between">
+                              <Button
+                                variant="contained"
+                                color="primary"
+                                size="small"
+                                onClick={handleAddInstance}
+                              >
+                                Save
+                              </Button>
+                              <Button
+                                variant="outlined"
+                                color="secondary"
+                                size="small"
+                                onClick={handleCancelAddMethod}
+                              >
+                                Cancel
+                              </Button>
+                            </Box>
+                          </Box>
+                        )}
+                    </Box>
+                  )}
                 </Grid>
                 <Grid size={12}>
                   <Typography variant="overline">Measures</Typography>
@@ -908,109 +1120,14 @@ const Dashboard = () => {
                   </Select>
                 </Grid>
                 <Grid size={12}>
-                  <Typography variant="overline">Algorithm Instances</Typography>
-                  <Box display="flex" alignItems="center">
-                    <Select
-                      multiple
-                      fullWidth
-                      size="small"
-                      value={selectedAlgorithmInstances}
-                      onChange={handleAlgorithmInstanceChange}
-                      renderValue={(selected) => (
-                        <div>
-                          {(selected as string[]).map((value) => (
-                            <Chip key={value} label={value} style={{ margin: 2 }} />
-                          ))}
-                        </div>
-                      )}
-                      disabled={Object.values(algorithmInstances).flat().length === 0} // Disable if no instances are added
-                    >
-                      {Object.values(algorithmInstances).flat().map((instance) => (
-                        <MenuItem key={instance.id} value={instance.id}>
-                          {instance.id}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                    <IconButton
-                      size="small"
-                      color="primary"
-                      onClick={() => setIsAddingAlgorithm(!isAddingAlgorithm)}
-                    >
-                      {isAddingAlgorithm ? <RemoveIcon /> : <AddIcon />}
-                    </IconButton>
-                  </Box>
-                  {isAddingAlgorithm && (
-                    <Box mt={2}>
-                      <Select
-                        fullWidth
-                        size="small"
-                        value={selectedAlgorithm}
-                        onChange={handleAlgorithmSelect}
-                        displayEmpty
-                      >
-                        <MenuItem value="" disabled>
-                          Select Algorithm
-                        </MenuItem>
-                        {Object.keys(algorithmConfigurations).map((algorithm) => (
-                          <MenuItem key={algorithm} value={algorithm}>
-                            {algorithm}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                      {selectedAlgorithm && (
-                        <Box mt={2}>
-                          <Typography variant="subtitle2">Initialization Parameters</Typography>
-                          {Object.keys(initParams).map((paramKey) => {
-                            const paramConfig = algorithmConfigurations[selectedAlgorithm]?.initParams[paramKey];
-                            return (
-                              <TextField
-                                key={paramKey}
-                                label={paramConfig?.label}
-                                value={initParams[paramKey]}
-                                onChange={(e) => handleParamChange(paramKey, e.target.value)}
-                                fullWidth
-                                size="small"
-                                type={paramConfig?.type === "number" ? "number" : "text"}
-                                inputProps={{
-                                  step: paramConfig?.step,
-                                  min: paramConfig?.min,
-                                  max: paramConfig?.max,
-                                }}
-                                sx={{ mb: 1 }}
-                              />
-                            );
-                          })}
-                          <Box display="flex" justifyContent="space-between">
-                            <Button
-                              variant="contained"
-                              color="primary"
-                              size="small"
-                              onClick={handleAddInstance}
-                            >
-                              Save
-                            </Button>
-                            <Button
-                              variant="outlined"
-                              color="secondary"
-                              size="small"
-                              onClick={handleCancelAddAlgorithm}
-                            >
-                              Cancel
-                            </Button>
-                          </Box>
-                        </Box>
-                      )}
-                    </Box>
-                  )}
-                </Grid>
-                <Grid size={12}>
-                  <Typography variant="overline">Query Parameters</Typography>
-                  {selectedAlgorithmInstances.map((instanceId) => {
-                    const [algorithm] = instanceId.split('-');
-                    const params = algorithmConfigurations[algorithm]?.queryParams || {};
+                  {existingQueryParams() && <Typography variant="overline">Query Parameters</Typography>}
+                  {selectedMethodInstances.map((instanceId) => {
+                    const [method] = instanceId.split('-');
+                    const params = methodConfigurations[method]?.queryParams || {};
+                    if (Object.keys(params).length === 0) return null; // Skip if no query params
                     return (
-                      <Box key={instanceId} mt={2}>
-                        <Typography variant="subtitle2">{instanceId}</Typography>
+                      <Box key={instanceId} >
+                        <Typography variant="subtitle2">{formatInstanceId(instanceId)}</Typography>
                         {Object.keys(params).map((paramKey) => {
                           const paramConfig = params[paramKey];
                           return (
@@ -1027,7 +1144,7 @@ const Dashboard = () => {
                                 min: paramConfig.min,
                                 max: paramConfig.max,
                               }}
-                              sx={{ mb: 1 }}
+                              sx={{ mb: 1, mt: 1 }}
                             />
                           );
                         })}
@@ -1037,7 +1154,7 @@ const Dashboard = () => {
                 </Grid>
                 {!!Object.keys(responseTimes).length && (
                   <Grid size={12}>
-                    <Typography variant="overline">Response time</Typography>
+                    <Typography variant="overline">Time Breakdown</Typography>
                     <Box>
                       <ResponseTimes series={getResponseTimeSeries()} />
                     </Box>
@@ -1048,19 +1165,20 @@ const Dashboard = () => {
           </Grid>
           <Grid size={9}>
             {!queryResults}
-            {!measures.length ? (
+            {selectedMethodInstances.length === 0 ? (
+              <Card variant="outlined">
+                <CardContent id="chart-content">
+                  <Typography sx={{color: 'text.secondary', fontSize: 14, textAlign: 'center'}}>
+                    Select or create an instance of an method to display charts
+                  </Typography>
+                </CardContent>
+              </Card>
+            ):
+            !measures.length ? (
               <Card variant="outlined">
                 <CardContent id="chart-content">
                   <Typography sx={{color: 'text.secondary', fontSize: 14, textAlign: 'center'}}>
                     Select at least one measure to display
-                  </Typography>
-                </CardContent>
-              </Card>
-            ) : selectedAlgorithmInstances.length === 0 ? (
-              <Card variant="outlined">
-                <CardContent id="chart-content">
-                  <Typography sx={{color: 'text.secondary', fontSize: 14, textAlign: 'center'}}>
-                    Select or create an instance of an algorithm to display charts
                   </Typography>
                 </CardContent>
               </Card>
@@ -1079,7 +1197,7 @@ const Dashboard = () => {
                 </CardContent>
               </Card>
             ) : (
-              // Render measure-by-measure, and within each measure, render each algorithm’s chart
+              // Render measure-by-measure, and within each measure, render each method’s chart
               measures.map((measure, measureIndex) => (
                 <Card variant="outlined" key={`measure_${measureIndex}`} sx={{ mb: 2 }}>
                   <CardContent id="chart-content">
@@ -1104,10 +1222,10 @@ const Dashboard = () => {
                       </IconButton>
                     </Box>
                     
-                    {/* For each selected algorithm instance, display a sub-chart for this measure */}
-                    {selectedAlgorithmInstances.map((instanceId) => {
+                    {/* For each selected method instance, display a sub-chart for this measure */}
+                    {selectedMethodInstances.map((instanceId) => {
                       const algoResult = queryResults[instanceId];
-                      // If there's no data yet for that algorithm, just show a loader or placeholder
+                      // If there's no data yet for that method, just show a loader or placeholder
                       if (!algoResult) {
                         return (
                           <Box
@@ -1116,8 +1234,9 @@ const Dashboard = () => {
                             display="flex"
                             alignItems="center"
                             justifyContent="center"
+                            position="relative"
                           >
-                            {loading ? (
+                            {loadingCharts[instanceId] ? (
                               <CircularProgress size={'3rem'} />
                             ) : (
                               <Typography
@@ -1127,7 +1246,7 @@ const Dashboard = () => {
                                   textAlign: 'center',
                                 }}
                               >
-                                No data for {instanceId}
+                                No data for {formatInstanceId(instanceId)}
                               </Typography>
                             )}
                           </Box>
@@ -1135,9 +1254,9 @@ const Dashboard = () => {
                       }
                       return (
                         <Box key={`chart_${instanceId}_${measureIndex}`} position="relative">
-                          {/* Algorithm label */}
+                          {/* Method label */}
                           <Typography variant="caption" sx={{ ml: 2 }}>
-                            {instanceId}
+                            {formatInstanceId(instanceId)}
                           </Typography>
                           {/* The actual chart */}
                           <svg
@@ -1145,6 +1264,22 @@ const Dashboard = () => {
                             width={width}
                             height={Math.floor(height / measures.length)}
                           />
+                          {loadingCharts[instanceId] && (
+                            <Box
+                              position="absolute"
+                              top={0}
+                              left={0}
+                              width="100%"
+                              height="100%"
+                              display="flex"
+                              alignItems="center"
+                              justifyContent="center"
+                              bgcolor="rgba(255, 255, 255, 0.7)"
+                              zIndex={1}
+                            >
+                              <CircularProgress size={'3rem'} />
+                            </Box>
+                          )}
                         </Box>
                       );
                     })}
@@ -1191,13 +1326,30 @@ const Dashboard = () => {
             id="chart-content-modal"
           >
             {selectedChart !== null &&
-              selectedAlgorithmInstances.map((instanceId) => (
-                <svg
-                  key={`svg_${instanceId}_${selectedChart}-modal`}
-                  id={`svg_${instanceId}_${selectedChart}-modal`}
-                  width={modalWidth}
-                  height={modalHeight / selectedAlgorithmInstances.length}
-                />
+              selectedMethodInstances.map((instanceId) => (
+                <Box key={`svg_${instanceId}_${selectedChart}-modal`} position="relative">
+                  <svg
+                    id={`svg_${instanceId}_${selectedChart}-modal`}
+                    width={modalWidth}
+                    height={modalHeight / selectedMethodInstances.length}
+                  />
+                  {loadingCharts[instanceId] && (
+                    <Box
+                      position="absolute"
+                      top={0}
+                      left={0}
+                      width="100%"
+                      height="100%"
+                      display="flex"
+                      alignItems="center"
+                      justifyContent="center"
+                      bgcolor="rgba(255, 255, 255, 0.7)"
+                      zIndex={1}
+                    >
+                      <CircularProgress size={'3rem'} />
+                    </Box>
+                  )}
+                </Box>
               ))}
           </Box>
         </Box>

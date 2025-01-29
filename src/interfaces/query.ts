@@ -1,7 +1,7 @@
 export interface QueryDto {
   query: {
-    algorithm: {
-      name: string,
+    methodConfig: {
+      key: string,
       params: any,
     },
     from: number,
@@ -17,8 +17,8 @@ export interface QueryDto {
 
 export interface Query {
   query: {
-    algorithm: {
-      name: string,
+    methodConfig: {
+      key: string,
       params: any,
     },
     from: Date,

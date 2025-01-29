@@ -1,5 +1,5 @@
-// Define types for algorithm configurations
-export interface AlgorithmParameter {
+// Define types for method configurations
+export interface MethodParameter {
   label: string;
   type: "number" | "boolean";
   default: number | boolean;
@@ -8,14 +8,14 @@ export interface AlgorithmParameter {
   step?: number; // Only for type "number"
 }
 
-interface AlgorithmConfig {
-    initParams: Record<string, AlgorithmParameter>; // Initialization parameters
-    queryParams: Record<string, AlgorithmParameter>; // Query parameters
+interface MethodConfig {
+    initParams: Record<string, MethodParameter>; // Initialization parameters
+    queryParams: Record<string, MethodParameter>; // Query parameters
   }
   
 
-// Define algorithm configurations
-export const algorithmConfigurations: Record<string, AlgorithmConfig> = {
+// Define method configurations
+export const methodConfigurations: Record<string, MethodConfig> = {
   MinMaxCache: {
     initParams:{
       dataReductionRatio: {
