@@ -1,9 +1,9 @@
-import {MouseEvent, SyntheticEvent, useEffect, useState, useRef} from 'react';
+import { MouseEvent, SyntheticEvent, useEffect, useState, useRef } from 'react';
 import * as d3 from 'd3';
 import Box from '@mui/material/Box';
 import Slider from '@mui/material/Slider';
 import Chip from '@mui/material/Chip';
-import Select, {SelectChangeEvent} from '@mui/material/Select';
+import Select, { SelectChangeEvent } from '@mui/material/Select';
 import Grid from '@mui/material/Grid2';
 import Typography from '@mui/material/Typography';
 import apiService from 'api/apiService';
@@ -15,29 +15,51 @@ import MenuItem from '@mui/material/MenuItem';
 import Card from '@mui/material/Card';
 import IconButton from '@mui/material/IconButton';
 import AppBar from '@mui/material/AppBar';
-import {DateTimePicker} from '@mui/x-date-pickers/DateTimePicker';
-import dayjs, {Dayjs} from 'dayjs';
+import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
+import dayjs, { Dayjs } from 'dayjs';
 import RemoveIcon from '@mui/icons-material/Remove';
 import AddIcon from '@mui/icons-material/Add';
 import CardContent from '@mui/material/CardContent';
 import Switch from '@mui/material/Switch';
-import {useDebouncedCallback} from 'use-debounce';
+import { useDebouncedCallback } from 'use-debounce';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import FormGroup from '@mui/material/FormGroup';
 import Toolbar from '@mui/material/Toolbar';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import CloseIcon from '@mui/icons-material/Close';
 import Dialog from '@mui/material/Dialog';
-import CircleIcon from '@mui/icons-material/Circle';
 import CircularProgress from '@mui/material/CircularProgress';
 
-import {Measure, Metadata, metadataDtoToDomain} from '../interfaces/metadata';
-import {ErrorDto, QueryResultsDto} from '../interfaces/data';
-import {Query, queryToQueryDto} from '../interfaces/query';
-import ProgressBar from 'components/ProgressBar';
-import ResponseTimes from "components/ProgressBar";
+import { Measure, Metadata, metadataDtoToDomain } from '../interfaces/metadata';
+import { ErrorDto, QueryResultsDto } from '../interfaces/data';
+import { Query, queryToQueryDto } from '../interfaces/query';
+import ResponseTimes from 'components/ProgressBar';
+import { Point } from 'interfaces/point';
+import { calculateJaccardSimilarity } from 'utils/jaccard';
+import { calculateSSIM } from 'utils/ssim';
 
 const round = (num: number): number => Math.round((num + Number.EPSILON) * 100) / 100;
+
+const generateLine = (start: { x: number; y: number }, length: number, angle: number) =>
+  Array.from({ length }, (_, i) => ({
+    x: Math.round(start.x + i * Math.cos((angle * Math.PI) / 180)),
+    y: Math.round(start.y + i * Math.sin((angle * Math.PI) / 180)),
+  }));
+
+const generateSineWave = (
+  start: { x: number; y: number },
+  length: number,
+  amplitude: number,
+  frequency: number,
+  phaseShift: number = 0,
+  verticalShift: number = 0
+): Point[] =>
+  Array.from({ length }, (_, i) => ({
+    x: start.x + i,
+    y: Math.round(
+      start.y + amplitude * Math.sin(frequency * (start.x + i) + phaseShift) + verticalShift
+    ),
+  }));
 
 const Dashboard = () => {
   const [loading, setLoading] = useState<boolean>(false);
@@ -77,12 +99,46 @@ const Dashboard = () => {
   const abortControllerRef = useRef<AbortController | null>(null);
   const abortControllerRawRef = useRef<AbortController | null>(null);
 
-  const margin = {top: 20, right: 0, bottom: 20, left: 40};
+  const margin = { top: 20, right: 0, bottom: 20, left: 40 };
   const min = 0;
   const max = 1;
   const step = 0.01;
 
   const clearMeasures = () => setMeasures([]);
+
+  const deduplicatePixels = (pixelArray: Point[]): Point[] => {
+    const seen = new Set<string>();
+
+    return pixelArray.filter((pixel) => {
+      const key = `${pixel.x},${pixel.y}`;
+      if (seen.has(key)) {
+        return false; // Skip duplicate
+      }
+      seen.add(key); // Mark as seen
+      return true;
+    });
+  };
+
+  const calculateTrueError = (pixelArray1: Point[], pixelArray2: Point[]): number => {
+    let differences = 0;
+
+    for (let column = 1 + margin.left; column < width; column++) {
+      let item1 = pixelArray1.filter((i) => i.x === column);
+      let item2 = pixelArray2.filter((i) => i.x === column);
+
+      item1.forEach((i1) =>
+        item2.forEach((i2) => {
+          if (i2.y && i1.y !== i2.y) {
+            console.log(i1.x, i1.y, i2.x, i2.y);
+            differences++;
+            return;
+          }
+        })
+      );
+    }
+
+    return (differences / width) * 100;
+  };
 
   const getResponseTimeSeries = (): any[] => {
     let series = [];
@@ -92,7 +148,7 @@ const Dashboard = () => {
         dataset: 'Cached',
         query: queryResults.queryTime * 1000,
         response: responseTime,
-      })
+      });
     }
 
     if (queryResultsRaw && responseTimeRaw) {
@@ -100,13 +156,13 @@ const Dashboard = () => {
         dataset: 'Raw',
         query: queryResultsRaw.queryTime * 1000,
         response: responseTimeRaw,
-      })
+      });
     }
 
     return series;
-  }
+  };
 
-  const pixelArrayToCoordinates = (pixelArray: string[][]): { x: number; y: number }[] =>
+  const pixelArrayToCoordinates = (pixelArray: string[][]): Point[] =>
     pixelArray
       .map((range, index) => {
         if (!range.length) return null;
@@ -124,6 +180,10 @@ const Dashboard = () => {
       );
 
   const parseRange = (range: string): number[] => {
+    if (['[]', '()'].includes(range)) {
+      return [-1];
+    }
+
     const match = range.match(/^([\[\(])(\-?\d+)\.\.(\-?\d+)([\]\)])$/);
 
     if (!match) {
@@ -233,7 +293,7 @@ const Dashboard = () => {
       query: {
         from: dayjs(fromQuery).toDate(),
         to: dayjs(toQuery).toDate(),
-        measures: measures.map(({id}) => id),
+        measures: measures.map(({ id }) => id),
         viewPort: {
           width: chartWidth - margin.left - margin.right,
           height: Math.floor(chartHeight / measures.length - margin.bottom - margin.top),
@@ -301,7 +361,7 @@ const Dashboard = () => {
       query: {
         from: dayjs(fromQuery).toDate(),
         to: dayjs(toQuery).toDate(),
-        measures: measures.map(({id}) => id),
+        measures: measures.map(({ id }) => id),
         viewPort: {
           width: chartWidth - margin.left - margin.right,
           height: Math.floor(height / measures.length - margin.bottom - margin.top),
@@ -346,7 +406,7 @@ const Dashboard = () => {
 
   const handleSelectMeasures = (event: SelectChangeEvent<string[]>) => {
     const {
-      target: {value},
+      target: { value },
     } = event;
 
     const selectedMeasures = typeof value === 'string' ? value.split(',') : value;
@@ -391,7 +451,7 @@ const Dashboard = () => {
   );
 
   const addRect = (
-    {x, y}: { x: number; y: number },
+    { x, y }: { x: number; y: number },
     color: string,
     containerHeight: number,
     svg: any
@@ -445,7 +505,8 @@ const Dashboard = () => {
     selector: string,
     data: { timestamp: number; value: number }[],
     width: number,
-    height: number
+    height: number,
+    measure?: number
   ) => {
     const containerWidth = width - margin.left - margin.right;
 
@@ -560,18 +621,66 @@ const Dashboard = () => {
       .attr('d', line);
 
     // Add data points as small rectangles (1x1 pixels)
-    formattedData.forEach((d: any) => {
+    const datapoints = formattedData.map((d: any) => ({
+      x: Math.floor(x(d[0])),
+      y: Math.floor(y(d[1])),
+    }));
+
+    deduplicatePixels(datapoints).forEach((datapoint: any) => {
       chartPlane
         .append('rect')
         .attr('class', 'point') // Center the rectangle on the x coordinate
-        .attr('x', Math.floor(x(d[0]))) // Center the rectangle on the x coordinate
-        .attr('y', Math.floor(y(d[1]))) // Center the rectangle on the y coordinate
+        .attr('x', datapoint.x) // Center the rectangle on the x coordinate
+        .attr('y', datapoint.y) // Center the rectangle on the y coordinate
         .attr('width', 1 / window.devicePixelRatio)
         .attr('height', 1 / window.devicePixelRatio)
         .style('shape-rendering', 'crispEdges')
         .attr('fill', 'purple');
     });
 
+    if (measure) {
+      const pixels = pixelArrayToCoordinates(queryResults!.litPixels[measure]);
+      const str8Line45 = generateLine({ x: 0, y: 150 }, pixels.length, 0);
+      const str8LineM45 = generateLine({ x: 0, y: 100 }, pixels.length, 0);
+      const sineWave1 = generateSineWave({ x: 0, y: 150 }, pixels.length, 10, 0.1, 0, 0);
+      const sineWave2 = generateSineWave({ x: 0, y: 150 }, pixels.length, 10, 0.1, Math.PI, 0);
+
+      const ssim = calculateSSIM(str8Line45, str8LineM45);
+
+      str8Line45.forEach((datapoint: any) => {
+        chartPlane
+          .append('rect')
+          .attr('class', 'point') // Center the rectangle on the x coordinate
+          .attr('x', datapoint.x + margin.left + 1) // Center the rectangle on the x coordinate
+          .attr('y', height - (datapoint.y + margin.bottom) - 2) // Center the rectangle on the y coordinate
+          .attr('width', 5 / window.devicePixelRatio)
+          .attr('height', 5 / window.devicePixelRatio)
+          .style('shape-rendering', 'crispEdges')
+          .attr('fill', 'blue');
+      });
+
+      str8LineM45.forEach((datapoint: any) => {
+        chartPlane
+          .append('rect')
+          .attr('class', 'point') // Center the rectangle on the x coordinate
+          .attr('x', datapoint.x + margin.left + 1) // Center the rectangle on the x coordinate
+          .attr('y', height - (datapoint.y + margin.bottom) - 2) // Center the rectangle on the y coordinate
+          .attr('width', 5 / window.devicePixelRatio)
+          .attr('height', 5 / window.devicePixelRatio)
+          .style('shape-rendering', 'crispEdges')
+          .attr('fill', 'red');
+      });
+
+      const text = svg
+        .append('text')
+        .attr('class', 'info')
+        .style('text-anchor', 'left')
+        .style('stroke-width', '1px')
+        .attr('font-size', 'smaller')
+        .text(`SSIM: ${ssim}`)
+        .attr('x', 0 + margin.left + 5)
+        .attr('y', margin.top + margin.bottom);
+    }
     const zoom = d3
       .zoom()
       .on('zoom', (event: any) => {
@@ -605,16 +714,16 @@ const Dashboard = () => {
 
     if (isFalsePixelsVisible) {
       pixelArrayToCoordinates(error.falsePixels).map(
-        ({x, y}: { x: number; y: number }, index: number) => {
-          addRect({x, y: y}, 'red', height, svg);
+        ({ x, y }: { x: number; y: number }, index: number) => {
+          addRect({ x, y: y }, 'red', height, svg);
         }
       );
     }
 
     if (isMissingPixelsVisible) {
       pixelArrayToCoordinates(error.missingPixels).map(
-        ({x, y}: { x: number; y: number }, index: number) => {
-          addRect({x, y: y}, 'orange', height, svg);
+        ({ x, y }: { x: number; y: number }, index: number) => {
+          addRect({ x, y: y }, 'orange', height, svg);
         }
       );
     }
@@ -626,8 +735,8 @@ const Dashboard = () => {
       .style('text-anchor', 'middle')
       .style('stroke-width', '1px')
       .attr('font-size', 'smaller')
-      .text(`Error: ${round(error.error * 100)}%`)
-      .attr('x', width - margin.left - margin.right - 10)
+      .text(`Max Error: ${round(error.error * 100)}%`)
+      .attr('x', width - margin.left - margin.right - 25)
       .attr('y', margin.top + margin.bottom);
 
     const bbox = text.node()?.getBBox();
@@ -669,15 +778,23 @@ const Dashboard = () => {
     if (!queryResults || (!queryResultsRaw && isCompareVisible) || selectedChart !== null) return;
 
     const series = Object.values(queryResults.data);
+    const measure = Object.keys(queryResults.data);
 
     series.map((data, index) => {
-      renderChart(`#svg${index}`, data, width, Math.floor(height / measures.length));
+      renderChart(
+        `#svg${index}`,
+        data,
+        width,
+        Math.floor(height / measures.length),
+        parseInt(measure[index])
+      );
       if (isCompareVisible) {
         renderChart(
           `#svg${index}_raw`,
           Object.values(queryResultsRaw!.data)[index],
           width,
-          Math.floor(height / measures.length)
+          Math.floor(height / measures.length),
+          parseInt(measure[index])
         );
       }
     });
@@ -783,22 +900,22 @@ const Dashboard = () => {
   ]);
 
   return (
-    <Box sx={{flexGrow: 1}}>
+    <Box sx={{ flexGrow: 1 }}>
       <AppBar position="relative">
         <Toolbar variant="dense">
-          <Typography variant="h6" component="div" sx={{flexGrow: 1}}>
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Big Data Chart
           </Typography>
         </Toolbar>
       </AppBar>
-      <Box component="main" sx={{pt: 2, px: 1}}>
+      <Box component="main" sx={{ pt: 2, px: 1 }}>
         <Grid container spacing={2}>
           <Grid size={3}>
-            <Card variant="outlined" sx={{p: 1}}>
+            <Card variant="outlined" sx={{ p: 1 }}>
               <Grid container spacing={1}>
                 <Grid size={12}>
                   <Typography variant="overline">Parameters</Typography>
-                  <Grid container spacing={2} sx={{pb: 1}} alignItems={'center'}>
+                  <Grid container spacing={2} sx={{ pb: 1 }} alignItems={'center'}>
                     <Grid size={12}>
                       <DateTimePicker
                         label="From"
@@ -806,7 +923,7 @@ const Dashboard = () => {
                         maxDateTime={dayjs(to)}
                         disabled={loading}
                         value={dayjs(from)}
-                        slotProps={{textField: {size: 'small', fullWidth: true}}}
+                        slotProps={{ textField: { size: 'small', fullWidth: true } }}
                         onAccept={(newValue: Dayjs | null) => {
                           if (newValue) {
                             setFrom(newValue.toDate());
@@ -821,7 +938,7 @@ const Dashboard = () => {
                         maxDateTime={dayjs(maxDate)}
                         disabled={loading}
                         value={dayjs(to)}
-                        slotProps={{textField: {size: 'small', fullWidth: true}}}
+                        slotProps={{ textField: { size: 'small', fullWidth: true } }}
                         onAccept={(newValue: Dayjs | null) => {
                           if (newValue) {
                             setTo(newValue.toDate());
@@ -853,7 +970,7 @@ const Dashboard = () => {
                             onClick={decreaseAccuracy}
                             disabled={accuracy <= min || loading}
                           >
-                            <RemoveIcon fontSize="inherit"/>
+                            <RemoveIcon fontSize="inherit" />
                           </IconButton>
                           <Slider
                             onChange={handleAccuracyChange}
@@ -874,7 +991,7 @@ const Dashboard = () => {
                             onClick={increaseAccuracy}
                             disabled={accuracy >= max || loading}
                           >
-                            <AddIcon fontSize="inherit"/>
+                            <AddIcon fontSize="inherit" />
                           </IconButton>
                         </Box>
                       </Box>
@@ -890,7 +1007,7 @@ const Dashboard = () => {
                       selected={table === 'intel_lab_exp'}
                       onClick={(event) => handleTableChange(event, 'intel_lab_exp')}
                     >
-                      <ListItemText primary="intel_lab_exp"/>
+                      <ListItemText primary="intel_lab_exp" />
                     </ListItemButton>
                     <ListItemButton
                       dense
@@ -898,7 +1015,7 @@ const Dashboard = () => {
                       selected={table === 'manufacturing_exp'}
                       onClick={(event) => handleTableChange(event, 'manufacturing_exp')}
                     >
-                      <ListItemText primary="manufacturing_exp"/>
+                      <ListItemText primary="manufacturing_exp" />
                     </ListItemButton>
                   </List>
                 </Grid>
@@ -913,7 +1030,7 @@ const Dashboard = () => {
                     renderValue={(selected) => (
                       <div>
                         {(selected as string[]).map((value) => (
-                          <Chip key={value} label={value} style={{margin: 2}}/>
+                          <Chip key={value} label={value} style={{ margin: 2 }} />
                         ))}
                       </div>
                     )}
@@ -980,9 +1097,7 @@ const Dashboard = () => {
                   <Grid size={12}>
                     <Typography variant="overline">Response time</Typography>
                     <Box>
-                      <ResponseTimes
-                        series={getResponseTimeSeries()}
-                      />
+                      <ResponseTimes series={getResponseTimeSeries()} />
                     </Box>
                   </Grid>
                 )}
@@ -994,7 +1109,7 @@ const Dashboard = () => {
             {!measures.length ? (
               <Card variant="outlined">
                 <CardContent id="chart-content">
-                  <Typography sx={{color: 'text.secondary', fontSize: 14, textAlign: 'center'}}>
+                  <Typography sx={{ color: 'text.secondary', fontSize: 14, textAlign: 'center' }}>
                     Select at least one measure to display
                   </Typography>
                 </CardContent>
@@ -1002,14 +1117,8 @@ const Dashboard = () => {
             ) : !queryResults || (!queryResultsRaw && isCompareVisible) ? (
               <Card variant="outlined">
                 <CardContent id="chart-content">
-                  <Typography sx={{color: 'text.secondary', fontSize: 14, textAlign: 'center'}}>
-                    {loading ? (
-                      <>
-                        <CircularProgress size={'3rem'}/>
-                      </>
-                    ) : (
-                      'No data'
-                    )}
+                  <Typography sx={{ color: 'text.secondary', fontSize: 14, textAlign: 'center' }}>
+                    <CircularProgress size={'3rem'} />
                   </Typography>
                 </CardContent>
               </Card>
@@ -1018,7 +1127,7 @@ const Dashboard = () => {
                 {Object.values(queryResults!.data).map((_, index) => (
                   <Card variant="outlined" key={`svg${index}`}>
                     <CardContent>
-                      <Box sx={{transform: 'translate(0, 0)'}} id="chart-content">
+                      <Box sx={{ transform: 'translate(0, 0)' }} id="chart-content">
                         <Box
                           display="flex"
                           flexDirection={'row'}
@@ -1029,7 +1138,7 @@ const Dashboard = () => {
                         >
                           <Typography
                             variant="body1"
-                            sx={{color: 'text.secondary', fontSize: 14}}
+                            sx={{ color: 'text.secondary', fontSize: 14 }}
                           >
                             {measures[index]?.name}
                           </Typography>
@@ -1040,7 +1149,7 @@ const Dashboard = () => {
                               setIsModalOpen(true);
                             }}
                           >
-                            <OpenInFullIcon fontSize={'small'}/>
+                            <OpenInFullIcon fontSize={'small'} />
                           </IconButton>
                         </Box>
                         <Box>
@@ -1083,7 +1192,7 @@ const Dashboard = () => {
                             >
                               <Typography
                                 variant="body1"
-                                sx={{color: 'text.secondary', fontSize: 14}}
+                                sx={{ color: 'text.secondary', fontSize: 14 }}
                               >
                                 {measures[index]?.name} raw data
                               </Typography>
@@ -1110,14 +1219,14 @@ const Dashboard = () => {
         fullWidth
         maxWidth="xl" // Adjust as needed
         PaperProps={{
-          style: {height: '90vh', overflow: 'hidden'},
+          style: { height: '90vh', overflow: 'hidden' },
         }}
       >
-        <Box sx={{width: '100%', height: '100%', p: 2}}>
+        <Box sx={{ width: '100%', height: '100%', p: 2 }}>
           <Box display={'flex'} alignItems={'flex-end'}>
             {selectedChart !== null && (
               <Typography
-                style={{position: 'absolute', top: 8, left: 8, zIndex: 1}}
+                style={{ position: 'absolute', top: 8, left: 8, zIndex: 1 }}
                 variant="body1"
               >
                 {measures[selectedChart]?.name}
@@ -1129,16 +1238,16 @@ const Dashboard = () => {
                 setSelectedChart(null);
                 setIsModalOpen(false);
               }}
-              style={{position: 'absolute', top: 8, right: 8, zIndex: 1}}
+              style={{ position: 'absolute', top: 8, right: 8, zIndex: 1 }}
             >
-              <CloseIcon fontSize={'small'}/>
+              <CloseIcon fontSize={'small'} />
             </IconButton>
           </Box>
           <Box
-            sx={{width: '100%', height: '100%', transform: 'translate(0, 0)'}}
+            sx={{ width: '100%', height: '100%', transform: 'translate(0, 0)' }}
             id="chart-content-modal"
           >
-            <svg id={`svg${selectedChart}-modal`} width={modalWidth} height={modalHeight}/>
+            <svg id={`svg${selectedChart}-modal`} width={modalWidth} height={modalHeight} />
           </Box>
         </Box>
       </Dialog>
