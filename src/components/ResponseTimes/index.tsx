@@ -7,7 +7,7 @@ interface ProgressBarProps {
 
 const ResponseTimes = ({series}: ProgressBarProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 400, height: 150 });
+  const [dimensions, setDimensions] = useState({ width: 500, height: 150 });
 
   useEffect(() => {
     const handleResize = () => {
@@ -41,7 +41,7 @@ const ResponseTimes = ({series}: ProgressBarProps) => {
         height={dimensions.height}
         skipAnimation
         resolveSizeBeforeRender
-        margin={{ top: 25, left: 100 }} // Further increase left margin to avoid cutting off y-axis labels
+        margin={{ top: 45, left: 100 }} // Further increase left margin to avoid cutting off y-axis labels
         slots={{
           noDataOverlay: ()=>(<></>)
         }}

@@ -1,4 +1,4 @@
-import {MouseEvent, SyntheticEvent, useEffect, useState, useRef} from 'react';
+import {MouseEvent, useEffect, useState, useRef} from 'react';
 import * as d3 from 'd3';
 import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
@@ -25,6 +25,10 @@ import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import CloseIcon from '@mui/icons-material/Close';
 import Dialog from '@mui/material/Dialog';
 import CircularProgress from '@mui/material/CircularProgress';
+import Collapse from '@mui/material/Collapse';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import SettingsIcon from '@mui/icons-material/Settings';
 
 import {Measure, Metadata, metadataDtoToDomain} from '../interfaces/metadata';
 import {QueryResultsDto} from '../interfaces/data';
@@ -33,8 +37,7 @@ import ResponseTimes from "components/ResponseTimes";
 import { methodConfigurations} from 'components/MethodSettings';
 import Button from '@mui/material/Button';
 import TextField from '@mui/material/TextField';
-
-const round = (num: number): number => Math.round((num + Number.EPSILON) * 100) / 100;
+import ErrorMetrics from 'components/ErrorMetrics';
 
 const Dashboard = () => {
   const [loading, setLoading] = useState<boolean>(false);
@@ -83,9 +86,20 @@ const Dashboard = () => {
   // a dictionary of AbortControllers keyed by method
   const abortControllersRef = useRef<{ [algo: string]: AbortController | null }>({});
 
+
+  const [errorMetrics, setErrorMetrics] = useState<any[]>([]);
+  const [isErrorMetricsLoading, setIsErrorMetricsLoading] = useState<boolean>(false);
+  const [isErrorMetricsOutdated, setIsErrorMetricsOutdated] = useState<boolean>(false);
+  const [selectedErrorMetric, setSelectedErrorMetric] = useState<{label: string, id: string}>({id: "ssim", label:'SSIM'});
+
+
   const margin = {top: 20, right: 0, bottom: 20, left: 40};
 
-  const clearMeasures = () => setMeasures([]);
+  const clearMeasures = () => {
+    setMeasures([]);
+    setQueryResults({});
+    setResponseTimes({});
+  };
 
   // returning an array of { dataset, query, response }
   const getResponseTimeSeries = (): any[] => {
@@ -703,11 +717,17 @@ const Dashboard = () => {
 
   const formatInstanceId = (instanceId: string) => {
     const [method, timestamp] = instanceId.split('-');
-
-    if(!hasConfigParameters(method)){
-      return `${method}`;
+  
+    if (!hasConfigParameters(method)) {
+      return method;
     }
-    const instanceNumber = (methodInstances[method] || []).findIndex(inst => inst.id === instanceId) + 1;
+  
+    const instances = methodInstances[method] || [];
+    if (instances.length === 1) {
+      return method;
+    }
+  
+    const instanceNumber = instances.findIndex(inst => inst.id === instanceId) + 1;
     return `${method}-${instanceNumber}`;
   };
 
@@ -715,7 +735,29 @@ const Dashboard = () => {
     const {
       target: { value },
     } = event;
-    setSelectedMethodInstances(typeof value === 'string' ? value.split(',') : value);
+    const newSelected = typeof value === 'string' ? value.split(',') : value;
+    setSelectedMethodInstances(newSelected);
+    
+    // Clear results for deselected instances
+    setQueryResults(prev => {
+      const newResults = {...prev};
+      Object.keys(newResults).forEach(key => {
+        if (!newSelected.includes(key)) {
+          delete newResults[key];
+        }
+      });
+      return newResults;
+    });
+    
+    setResponseTimes(prev => {
+      const newTimes = {...prev};
+      Object.keys(newTimes).forEach(key => {
+        if (!newSelected.includes(key)) {
+          delete newTimes[key];
+        }
+      });
+      return newTimes;
+    });
   };
 
   // reset zoom
@@ -906,278 +948,421 @@ const Dashboard = () => {
     table,
     selectedChart,
   ]);
-  
+
+  // Update outdated state when relevant changes occur
+  useEffect(() => {
+    if (errorMetrics.length > 0) {
+      setIsErrorMetricsOutdated(true);
+    }
+  }, [selectedMethodInstances, measures, queryResults, from, to]);
+
+  const handleCalculateErrorMetrics = async () => {
+    setIsErrorMetricsLoading(true);
+    try {
+      if (errorMetrics.length === 0) {
+        setSelectedErrorMetric({label: 'SSIM', id: "ssim"});
+      }
+      
+      // Generate unique metrics for each method instance
+      const metricsData = measures.map((m) => {
+        const measureData: any = { measure: m.name };
+        selectedMethodInstances.forEach((instanceId) => {
+          // Generate different random values for each method instance
+          measureData[`${instanceId}_ssim`] = 0.95 + (Math.random() * 0.01);
+          measureData[`${instanceId}_pixelError`] = Math.random();
+        });
+        return measureData;
+      });
+      
+      setErrorMetrics(metricsData);
+      setIsErrorMetricsOutdated(false);
+    } finally {
+      setIsErrorMetricsLoading(false);
+    }
+  };
+
+  const [controlPanelExpanded, setControlPanelExpanded] = useState(true);
+  const [metricsPanelExpanded, setMetricsPanelExpanded] = useState(true);
+
   return (
-    <Box sx={{flexGrow: 1}}>
+    <Box sx={{ flexGrow: 1 }}>
       <AppBar position="relative">
         <Toolbar variant="dense">
-          <Typography variant="h6" component="div" sx={{flexGrow: 1}}>
-            Big Data Chart
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+            TimeVizLens
           </Typography>
         </Toolbar>
       </AppBar>
-      <Box component="main" sx={{pt: 2, px: 1}}>
+      <Box component="main" sx={{ pt: 2, px: 1 }}>
         <Grid container spacing={2}>
-          <Grid size={3}>
-            <Card variant="outlined" sx={{p: 1}}>
-              <Grid container spacing={1}>
-                <Grid size={12}>
-                  <Typography variant="overline">Parameters</Typography>
-                  <Grid container spacing={2} sx={{pb: 1}} alignItems={'center'}>
-                    <Grid size={12}>
-                      <DateTimePicker
-                        label="From"
-                        minDateTime={dayjs(minDate)}
-                        maxDateTime={dayjs(to)}
-                        disabled={loading}
-                        value={dayjs(from)}
-                        slotProps={{textField: {size: 'small', fullWidth: true}}}
-                        onAccept={(newValue: Dayjs | null) => {
-                          if (newValue) {
-                            setFrom(newValue.toDate());
-                          }
-                        }}
-                      />
-                    </Grid>
-                    <Grid size={12}>
-                      <DateTimePicker
-                        label="To"
-                        minDateTime={dayjs(from)}
-                        maxDateTime={dayjs(maxDate)}
-                        disabled={loading}
-                        value={dayjs(to)}
-                        slotProps={{textField: {size: 'small', fullWidth: true}}}
-                        onAccept={(newValue: Dayjs | null) => {
-                          if (newValue) {
-                            setTo(newValue.toDate());
-                          }
-                        }}
-                      />
-                    </Grid>
-                  </Grid>
-                </Grid>
-                <Grid size={12}>
-                  <Typography variant="overline">Dataset</Typography>
-                  <List component="nav" aria-label="table">
-                    <ListItemButton
-                      dense
-                      disabled={loading}
-                      selected={table === 'intel_lab_exp'}
-                      onClick={(event) => handleTableChange(event, 'intel_lab_exp')}
-                    >
-                      <ListItemText primary="intel_lab_exp"/>
-                    </ListItemButton>
-                    <ListItemButton
-                      dense
-                      disabled={loading}
-                      selected={table === 'manufacturing_exp'}
-                      onClick={(event) => handleTableChange(event, 'manufacturing_exp')}
-                    >
-                      <ListItemText primary="manufacturing_exp"/>
-                    </ListItemButton>
-                  </List>
-                </Grid>
-                <Grid size={12}>
-                  <Typography variant="overline">Method Instances</Typography>
-                  <Box display="flex" alignItems="center">
-                    <Select
-                      multiple
-                      fullWidth
-                      size="small"
-                      value={selectedMethodInstances}
-                      onChange={handleMethodInstanceChange}
-                      renderValue={(selected) => (
-                        <Box display="flex" flexWrap="wrap" gap={1}>
-                          {(selected as string[]).map((value) => {
-                            const instance = methodInstances[selectedMethod]?.find(inst => inst.id === value);
-                            return (
-                              <Chip
-                                key={value}
-                                label={formatInstanceId(value)}
-                                style={{ margin: 2 }}
-                              />
-                            );
-                          })}
-                        </Box>
-                      )}
-                      disabled={Object.values(methodInstances).flat().length === 0} // Disable if no instances are added
-                      MenuProps={{
-                        PaperProps: {
-                          style: {
-                            maxHeight: 48 * 4.5 + 8,
-                            width: 250,
-                          },
-                        },
-                      }}
-                    >
-                      {Object.values(methodInstances).flat().map((instance) => (
-                        <MenuItem key={instance.id} value={instance.id}>
-                          <Box display="flex" flexDirection="column">
-                            <Typography variant="body2">{formatInstanceId(instance.id)}</Typography>
-                            <Typography variant="caption" color="textSecondary">
-                              {Object.entries(instance.initParams).map(([key, value]) => (
-                                <span key={key}>{`${key}: ${value},`}</span>
-                              ))}
-                            </Typography>
-                          </Box>
-                        </MenuItem>
-                      ))}
-                    </Select>
-                    <IconButton
-                      size="small"
-                      color="primary"
-                      onClick={() => setIsAddingMethod(!isAddingMethod)}
-                    >
-                      {isAddingMethod ? <RemoveIcon /> : <AddIcon />}
+          <Grid size={4}>
+            <Grid container spacing={2}>
+              <Grid size={12}>
+                <Card variant="outlined">
+                  <Box 
+                    sx={{ 
+                      p: 1, 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between',
+                      borderBottom: '1px solid rgba(0, 0, 0, 0.12)',
+                      bgcolor: 'rgba(0, 0, 0, 0.03)'
+                    }}
+                    onClick={() => setControlPanelExpanded(!controlPanelExpanded)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <Typography variant="subtitle1" fontWeight="medium">Control Panel</Typography>
+                    <IconButton size="small">
+                      {controlPanelExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
                     </IconButton>
                   </Box>
-                  {isAddingMethod && (
-                    <Box mt={2}>
-                        <Typography variant="subtitle2">Method</Typography>
-                        <Select
-                          fullWidth
-                          size="small"
-                          value={selectedMethod}
-                          onChange={handleMethodSelect}
-                          displayEmpty
-                        >
-                          <MenuItem value="" disabled>
-                            Select Method
-                          </MenuItem>
-                          {Object.keys(methodConfigurations).map((method) => (
-                            <MenuItem key={method} value={method}>
-                              {method}
-                            </MenuItem>
-                          ))}
-                        </Select>
-                        {selectedMethod &&  (
-                          <Box mt={2}>
-                            {hasConfigParameters(selectedMethod) && <Typography variant="subtitle2">Initialization Parameters</Typography>}
-                            {Object.keys(initParams).map((paramKey) => {
-                              const paramConfig = methodConfigurations[selectedMethod]?.initParams[paramKey];
-                              return (
-                                <TextField
-                                  key={paramKey}
-                                  label={paramConfig?.label}
-                                  value={initParams[paramKey]}
-                                  onChange={(e) => handleParamChange(paramKey, e.target.value)}
-                                  fullWidth
-                                  size="small"
-                                  type={paramConfig?.type === "number" ? "number" : "text"}
-                                  inputProps={{
-                                    step: paramConfig?.step,
-                                    min: paramConfig?.min,
-                                    max: paramConfig?.max,
-                                  }}
-                                  sx={{ mb: 1, mt: 1 }}
-                                />
-                              );
-                            })}
-                            <Box display="flex" justifyContent="space-between">
-                              <Button
-                                variant="contained"
-                                color="primary"
-                                size="small"
-                                onClick={handleAddInstance}
-                              >
-                                Save
-                              </Button>
-                              <Button
-                                variant="outlined"
-                                color="secondary"
-                                size="small"
-                                onClick={handleCancelAddMethod}
-                              >
-                                Cancel
-                              </Button>
-                            </Box>
-                          </Box>
-                        )}
-                    </Box>
-                  )}
-                </Grid>
-                <Grid size={12}>
-                  <Typography variant="overline">Measures</Typography>
-                  <Select
-                    multiple
-                    fullWidth
-                    size="small"
-                    value={measures.map((measure) => measure.name)}
-                    onChange={handleSelectMeasures}
-                    renderValue={(selected) => (
-                      <div>
-                        {(selected as string[]).map((value) => (
-                          <Chip key={value} label={value} style={{margin: 2}}/>
-                        ))}
-                      </div>
-                    )}
-                  >
-                    {metadata?.measures.map((measure: Measure) => (
-                      <MenuItem key={measure.id} value={measure.name}>
-                        {measure.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </Grid>
-                <Grid size={12}>
-                  {existingQueryParams() && <Typography variant="overline">Query Parameters</Typography>}
-                  {selectedMethodInstances.map((instanceId) => {
-                    const [method] = instanceId.split('-');
-                    const params = methodConfigurations[method]?.queryParams || {};
-                    if (Object.keys(params).length === 0) return null; // Skip if no query params
-                    return (
-                      <Box key={instanceId} >
-                        <Typography variant="subtitle2">{formatInstanceId(instanceId)}</Typography>
-                        {Object.keys(params).map((paramKey) => {
-                          const paramConfig = params[paramKey];
-                          return (
-                            <TextField
-                              key={paramKey}
-                              label={paramConfig.label}
-                              value={queryParams[instanceId]?.[paramKey] || paramConfig.default}
-                              onChange={(e) => handleQueryParamChange(instanceId, paramKey, e.target.value)}
+                  <Collapse in={controlPanelExpanded}>
+                    <Box sx={{ p: 1 }}>
+                      {/* Control Panel Content */}
+                      <Grid container spacing={1}>
+                        <Grid size={12}>
+                          <Typography variant="overline">Parameters</Typography>
+                          <Grid container spacing={2} sx={{ pb: 1 }} alignItems={'center'}>
+                            <Grid size={12}>
+                              <DateTimePicker
+                                label="From"
+                                minDateTime={dayjs(minDate)}
+                                maxDateTime={dayjs(to)}
+                                disabled={loading}
+                                value={dayjs(from)}
+                                slotProps={{ textField: { size: 'small', fullWidth: true } }}
+                                onAccept={(newValue: Dayjs | null) => {
+                                  if (newValue) {
+                                    setFrom(newValue.toDate());
+                                  }
+                                }}
+                              />
+                            </Grid>
+                            <Grid size={12}>
+                              <DateTimePicker
+                                label="To"
+                                minDateTime={dayjs(from)}
+                                maxDateTime={dayjs(maxDate)}
+                                disabled={loading}
+                                value={dayjs(to)}
+                                slotProps={{ textField: { size: 'small', fullWidth: true } }}
+                                onAccept={(newValue: Dayjs | null) => {
+                                  if (newValue) {
+                                    setTo(newValue.toDate());
+                                  }
+                                }}
+                              />
+                            </Grid>
+                          </Grid>
+                        </Grid>
+                        <Grid size={12}>
+                          <Typography variant="overline">Dataset</Typography>
+                          <List component="nav" aria-label="table">
+                            <ListItemButton
+                              dense
+                              disabled={loading}
+                              selected={table === 'intel_lab_exp'}
+                              onClick={(event) => handleTableChange(event, 'intel_lab_exp')}
+                            >
+                              <ListItemText primary="intel_lab_exp" />
+                            </ListItemButton>
+                            <ListItemButton
+                              dense
+                              disabled={loading}
+                              selected={table === 'manufacturing_exp'}
+                              onClick={(event) => handleTableChange(event, 'manufacturing_exp')}
+                            >
+                              <ListItemText primary="manufacturing_exp" />
+                            </ListItemButton>
+                          </List>
+                        </Grid>
+                        <Grid size={12}>
+                          <Typography variant="overline">Method Instances</Typography>
+                          <Box display="flex" alignItems="center">
+                            <Select
+                              multiple
                               fullWidth
                               size="small"
-                              type={paramConfig.type === "number" ? "number" : "text"}
-                              inputProps={{
-                                step: paramConfig.step,
-                                min: paramConfig.min,
-                                max: paramConfig.max,
+                              value={selectedMethodInstances}
+                              onChange={handleMethodInstanceChange}
+                              renderValue={(selected) => (
+                                <Box display="flex" flexWrap="wrap" gap={1}>
+                                  {(selected as string[]).map((value) => {
+                                    const instance = methodInstances[selectedMethod]?.find(inst => inst.id === value);
+                                    return (
+                                      <Chip
+                                        key={value}
+                                        label={formatInstanceId(value)}
+                                        style={{ margin: 2 }}
+                                      />
+                                    );
+                                  })}
+                                </Box>
+                              )}
+                              disabled={Object.values(methodInstances).flat().length === 0} // Disable if no instances are added
+                              MenuProps={{
+                                PaperProps: {
+                                  style: {
+                                    maxHeight: 48 * 4.5 + 8,
+                                    width: 250,
+                                  },
+                                },
                               }}
-                              sx={{ mb: 1, mt: 1 }}
-                            />
-                          );
-                        })}
-                      </Box>
-                    );
-                  })}
-                </Grid>
-                {!!Object.keys(responseTimes).length && (
-                  <Grid size={12}>
-                    <Typography variant="overline">Time Breakdown</Typography>
-                    <Box>
-                      <ResponseTimes series={getResponseTimeSeries()} />
+                            >
+                              {Object.values(methodInstances).flat().map((instance) => (
+                                <MenuItem key={instance.id} value={instance.id}>
+                                  <Box display="flex" flexDirection="column">
+                                    <Typography variant="body2">{formatInstanceId(instance.id)}</Typography>
+                                    <Typography variant="caption" color="textSecondary">
+                                      {Object.entries(instance.initParams).map(([key, value]) => (
+                                        <span key={key}>{`${key}: ${value},`}</span>
+                                      ))}
+                                    </Typography>
+                                  </Box>
+                                </MenuItem>
+                              ))}
+                            </Select>
+                            <IconButton
+                              size="small"
+                              color="primary"
+                              onClick={() => setIsAddingMethod(!isAddingMethod)}
+                            >
+                              {isAddingMethod ? <RemoveIcon /> : <AddIcon />}
+                            </IconButton>
+                          </Box>
+                          {isAddingMethod && (
+                            <Box mt={2}>
+                              <Typography variant="subtitle2">Method</Typography>
+                              <Select
+                                fullWidth
+                                size="small"
+                                value={selectedMethod}
+                                onChange={handleMethodSelect}
+                                displayEmpty
+                              >
+                                <MenuItem value="" disabled>
+                                  Select Method
+                                </MenuItem>
+                                {Object.keys(methodConfigurations).map((method) => (
+                                  <MenuItem key={method} value={method}>
+                                    {method}
+                                  </MenuItem>
+                                ))}
+                              </Select>
+                              {selectedMethod && (
+                                <Box mt={2}>
+                                  {hasConfigParameters(selectedMethod) && <Typography variant="subtitle2">Initialization Parameters</Typography>}
+                                  {Object.keys(initParams).map((paramKey) => {
+                                    const paramConfig = methodConfigurations[selectedMethod]?.initParams[paramKey];
+                                    return (
+                                      <TextField
+                                        key={paramKey}
+                                        label={paramConfig?.label}
+                                        value={initParams[paramKey]}
+                                        onChange={(e) => handleParamChange(paramKey, e.target.value)}
+                                        fullWidth
+                                        size="small"
+                                        type={paramConfig?.type === "number" ? "number" : "text"}
+                                        inputProps={{
+                                          step: paramConfig?.step,
+                                          min: paramConfig?.min,
+                                          max: paramConfig?.max,
+                                        }}
+                                        sx={{ mb: 1, mt: 1 }}
+                                      />
+                                    );
+                                  })}
+                                  <Box display="flex" justifyContent="space-between">
+                                    <Button
+                                      variant="contained"
+                                      color="primary"
+                                      size="small"
+                                      onClick={handleAddInstance}
+                                    >
+                                      Save
+                                    </Button>
+                                    <Button
+                                      variant="outlined"
+                                      color="secondary"
+                                      size="small"
+                                      onClick={handleCancelAddMethod}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </Box>
+                                </Box>
+                              )}
+                            </Box>
+                          )}
+                        </Grid>
+                        <Grid size={12}>
+                          <Typography variant="overline">Measures</Typography>
+                          <Select
+                            multiple
+                            fullWidth
+                            size="small"
+                            value={measures.map((measure) => measure.name)}
+                            onChange={handleSelectMeasures}
+                            renderValue={(selected) => (
+                              <div>
+                                {(selected as string[]).map((value) => (
+                                  <Chip key={value} label={value} style={{ margin: 2 }} />
+                                ))}
+                              </div>
+                            )}
+                          >
+                            {metadata?.measures.map((measure: Measure) => (
+                              <MenuItem key={measure.id} value={measure.name}>
+                                {measure.name}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </Grid>
+                        <Grid size={12}>
+                          {existingQueryParams() && <Typography variant="overline">Query Parameters</Typography>}
+                          {selectedMethodInstances.map((instanceId) => {
+                            const [method] = instanceId.split('-');
+                            const params = methodConfigurations[method]?.queryParams || {};
+                            if (Object.keys(params).length === 0) return null; // Skip if no query params
+                            return (
+                              <Box key={instanceId}>
+                                <Typography variant="subtitle2">{formatInstanceId(instanceId)}</Typography>
+                                {Object.keys(params).map((paramKey) => {
+                                  const paramConfig = params[paramKey];
+                                  return (
+                                    <TextField
+                                      key={paramKey}
+                                      label={paramConfig.label}
+                                      value={queryParams[instanceId]?.[paramKey] || paramConfig.default}
+                                      onChange={(e) => handleQueryParamChange(instanceId, paramKey, e.target.value)}
+                                      fullWidth
+                                      size="small"
+                                      type={paramConfig.type === "number" ? "number" : "text"}
+                                      inputProps={{
+                                        step: paramConfig.step,
+                                        min: paramConfig.min,
+                                        max: paramConfig.max,
+                                      }}
+                                      sx={{ mb: 1, mt: 1 }}
+                                    />
+                                  );
+                                })}
+                              </Box>
+                            );
+                          })}
+                        </Grid>
+                      </Grid>
                     </Box>
-                  </Grid>
-                )}
+                  </Collapse>
+                </Card>
               </Grid>
-            </Card>
+              <Grid size={12}>
+                <Card variant="outlined">
+                  <Box 
+                    sx={{ 
+                      p: 1, 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between',
+                      borderBottom: '1px solid rgba(0, 0, 0, 0.12)',
+                      bgcolor: 'rgba(0, 0, 0, 0.03)'
+                    }}
+                    onClick={() => setMetricsPanelExpanded(!metricsPanelExpanded)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <Typography variant="subtitle1" fontWeight="medium">Evaluation Metrics</Typography>
+                    <IconButton size="small">
+                      {metricsPanelExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                    </IconButton>
+                  </Box>
+                  <Collapse in={metricsPanelExpanded}>
+                    <Box sx={{ p: 1 }}>
+                    {!queryResults}
+                    {selectedMethodInstances.length === 0 ? (
+                          <Typography sx={{ color: 'text.secondary', fontSize: 14, textAlign: 'center' }}>
+                            Select or create an instance of an method to display charts
+                          </Typography>
+                      ) : !measures.length ? (
+                            <Typography sx={{ color: 'text.secondary', fontSize: 14, textAlign: 'center' }}>
+                              Select at least one measure to display
+                            </Typography>          
+                      ) :
+                       (
+                        <Grid container spacing={1}>
+                          <Grid size={12}>
+                            <Typography variant="overline">Time Breakdown</Typography>
+                            <Box>
+                              <ResponseTimes series={getResponseTimeSeries()} />
+                            </Box>
+                            {!!Object.keys(responseTimes).length && (
+                              <Grid size={12}>
+                              <Box sx={{ mt: 2 }}>
+                                <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+                                  <Box display="flex" alignItems="center" gap={1}>
+                                    <Typography variant="overline">Visualization Quality</Typography>
+                                    {isErrorMetricsOutdated && errorMetrics.length > 0 && (
+                                      <Typography 
+                                        variant="caption" 
+                                        sx={{ 
+                                          color: 'warning.main',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: 0.5
+                                        }}
+                                      >
+                                        (outdated)
+                                      </Typography>
+                                    )}
+                                  </Box>
+                                  <Button
+                                    variant="contained"
+                                    size="small"
+                                    onClick={handleCalculateErrorMetrics}
+                                    disabled={isErrorMetricsLoading}
+                                    startIcon={isErrorMetricsLoading ? <CircularProgress size={16} /> : null}
+                                    color={isErrorMetricsOutdated ? "warning" : "primary"}
+                                    sx={{ minWidth: 120 }}
+                                  >
+                                    {isErrorMetricsLoading ? 'Calculating...' : isErrorMetricsOutdated ? 'Recalculate' : 'Calculate'}
+                                  </Button>
+                                </Box>
+                            
+                                {errorMetrics.length > 0 && (
+                                  <Box sx={{ mt: 2 }}>
+                                    <ErrorMetrics 
+                                      series={errorMetrics} 
+                                      selectedMetric={selectedErrorMetric} 
+                                      selectedMethodInstances={selectedMethodInstances}
+                                      formatInstanceId={formatInstanceId} 
+                                    />
+                                  </Box>
+                                )}
+                              </Box>
+                            </Grid>                            
+                            )}
+                          </Grid>
+                        </Grid>
+                      )}
+                    </Box>
+                  </Collapse>
+                </Card>
+              </Grid>
+            </Grid>
           </Grid>
-          <Grid size={9}>
+          <Grid size={8}>
             {!queryResults}
             {selectedMethodInstances.length === 0 ? (
               <Card variant="outlined">
                 <CardContent id="chart-content">
-                  <Typography sx={{color: 'text.secondary', fontSize: 14, textAlign: 'center'}}>
+                  <Typography sx={{ color: 'text.secondary', fontSize: 14, textAlign: 'center' }}>
                     Select or create an instance of an method to display charts
                   </Typography>
                 </CardContent>
               </Card>
-            ):
-            !measures.length ? (
+            ) : !measures.length ? (
               <Card variant="outlined">
                 <CardContent id="chart-content">
-                  <Typography sx={{color: 'text.secondary', fontSize: 14, textAlign: 'center'}}>
+                  <Typography sx={{ color: 'text.secondary', fontSize: 14, textAlign: 'center' }}>
                     Select at least one measure to display
                   </Typography>
                 </CardContent>
@@ -1185,10 +1370,10 @@ const Dashboard = () => {
             ) : !queryResults ? (
               <Card variant="outlined">
                 <CardContent id="chart-content">
-                  <Typography sx={{color: 'text.secondary', fontSize: 14, textAlign: 'center'}}>
+                  <Typography sx={{ color: 'text.secondary', fontSize: 14, textAlign: 'center' }}>
                     {loading ? (
                       <>
-                        <CircularProgress size={'3rem'}/>
+                        <CircularProgress size={'3rem'} />
                       </>
                     ) : (
                       'No data'
@@ -1221,7 +1406,7 @@ const Dashboard = () => {
                         <OpenInFullIcon fontSize={'small'} />
                       </IconButton>
                     </Box>
-                    
+
                     {/* For each selected method instance, display a sub-chart for this measure */}
                     {selectedMethodInstances.map((instanceId) => {
                       const algoResult = queryResults[instanceId];
