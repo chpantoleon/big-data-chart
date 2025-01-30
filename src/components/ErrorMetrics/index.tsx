@@ -17,7 +17,7 @@ const ErrorMetrics = ({
   formatInstanceId 
 }: ErrorMetricsProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 500, height: 150 });
+  const [dimensions, setDimensions] = useState({ width: 500, height: 140 });
 
   useEffect(() => {
     const handleResize = () => {

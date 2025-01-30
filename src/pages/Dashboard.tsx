@@ -28,7 +28,6 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Collapse from '@mui/material/Collapse';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
-import SettingsIcon from '@mui/icons-material/Settings';
 
 import {Measure, Metadata, metadataDtoToDomain} from '../interfaces/metadata';
 import {QueryResultsDto} from '../interfaces/data';
@@ -40,6 +39,12 @@ import TextField from '@mui/material/TextField';
 import ErrorMetrics from 'components/ErrorMetrics';
 
 const Dashboard = () => {
+  const REFERENCE_METHOD = 'M4';
+  
+  // Add state for reference data
+  const [referenceResults, setReferenceResults] = useState<Record<number, QueryResultsDto>>({});
+  const [isReferenceFetching, setIsReferenceFetching] = useState<boolean>(false);
+
   const [loading, setLoading] = useState<boolean>(false);
 
   const [from, setFrom] = useState<Date>(dayjs(1330144930991).toDate());
@@ -51,9 +56,6 @@ const Dashboard = () => {
 
   const [minDate, setMinDate] = useState<Date | null>(null);
   const [maxDate, setMaxDate] = useState<Date | null>(null);
-
-  // const [isFalsePixelsVisible, setIsFalsePixelsVisible] = useState<boolean>(true);
-  // const [isMissingPixelsVisible, setIsMissingPixelsVisible] = useState<boolean>(true);
 
   const [measures, setMeasures] = useState<Measure[]>([]);
 
@@ -86,12 +88,15 @@ const Dashboard = () => {
   // a dictionary of AbortControllers keyed by method
   const abortControllersRef = useRef<{ [algo: string]: AbortController | null }>({});
 
+  // Add reference abort controller
+  const referenceAbortController = useRef<AbortController | null>(null);
 
   const [errorMetrics, setErrorMetrics] = useState<any[]>([]);
   const [isErrorMetricsLoading, setIsErrorMetricsLoading] = useState<boolean>(false);
   const [isErrorMetricsOutdated, setIsErrorMetricsOutdated] = useState<boolean>(false);
   const [selectedErrorMetric, setSelectedErrorMetric] = useState<{label: string, id: string}>({id: "ssim", label:'SSIM'});
 
+  const [isErrorCalculationInProgress, setIsErrorCalculationInProgress] = useState<boolean>(false);
 
   const margin = {top: 20, right: 0, bottom: 20, left: 40};
 
@@ -146,64 +151,7 @@ const Dashboard = () => {
     return methodConfigurations[method]?.queryParams && Object.keys(methodConfigurations[method]?.queryParams).length > 0;
   }
   
-  const pixelArrayToCoordinates = (pixelArray: string[][]): { x: number; y: number }[] =>
-    pixelArray
-      .map((range, index) => {
-        if (!range.length) return null;
-
-        return {
-          column: index,
-        };
-      })
-      .filter((range) => range)
-      .flatMap((range) =>
-        pixelArray[range!.column].flatMap(parseRange).map((y) => ({
-          x: range!.column,
-          y,
-        }))
-      );
-
-  const parseRange = (range: string): number[] => {
-    const match = range.match(/^([\[\(])(\-?\d+)\.\.(\-?\d+)([\]\)])$/);
-
-    if (!match) {
-      throw new Error(
-        `Invalid range format. Example valid format: '[154..155]' or '(154..155]', ${range} given.`
-      );
-    }
-
-    const [, startBracket, start, end, endBracket] = match;
-
-    let startNum = parseInt(start, 10);
-    let endNum = parseInt(end, 10);
-
-    if (startBracket === '(') {
-      startNum += 1;
-    }
-    if (endBracket === ')') {
-      endNum -= 1;
-    }
-
-    if (startNum === endNum) {
-      return [startNum];
-    }
-
-    const list = [];
-    for (var i = startNum; i <= endNum; i++) {
-      list.push(i);
-    }
-    return list;
-  };
-
   const getTickFormat = () => {
-    const range = to.getTime() - from.getTime();
-    // if (range < 60000) {
-    //   return d3.timeFormat('%H:%M:%S.%L'); // Show date and time
-    // } else if (range < 86400000) {
-    //   return d3.timeFormat('%H:%M:%S'); // Show time
-    // } else {
-    //   return d3.timeFormat('%d-%m-%y'); // Show time with milliseconds
-    // }
     return d3.timeFormat('%Y-%m-%d %H:%M:%S');
   };
 
@@ -459,57 +407,6 @@ const Dashboard = () => {
     300
   );
 
-  // const addRect = (
-  //   {x, y}: { x: number; y: number },
-  //   color: string,
-  //   containerHeight: number,
-  //   svg: any
-  // ) => {
-  //   const cx = Math.floor(x + margin.left + 1 / window.devicePixelRatio);
-  //   const cy = Math.floor(containerHeight - y);
-
-  //   const rect = svg
-  //     .append('rect')
-  //     .attr('class', 'error-pixel')
-  //     .attr('x', cx)
-  //     .attr('y', cy)
-  //     .attr('width', 1 / window.devicePixelRatio)
-  //     .attr('height', 1 / window.devicePixelRatio)
-  //     .style('fill', `${color}`);
-
-  //   rect
-  //     .on('mouseover', (elem: SVGRectElement) => {
-  //       const tooltipGroup = svg.append('g').attr('class', 'tooltip-group');
-  //       const horizontalOffset = cx > 900 ? -50 : 0;
-  //       const verticalOffset = cy < 25 ? 50 : -15;
-  //       const text = tooltipGroup
-  //         .append('text')
-  //         .attr('class', 'tooltip')
-  //         .style('text-anchor', 'middle')
-  //         .text(`x: ${x}, y: ${y}\ncx: ${cx}, cy: ${cy}`)
-  //         .attr('fill', 'white')
-  //         .attr('x', cx + horizontalOffset)
-  //         .attr('y', cy + verticalOffset);
-
-  //       const bbox = text.node().getBBox();
-
-  //       tooltipGroup
-  //         .insert('rect', 'text')
-  //         .attr('x', bbox.x - 10)
-  //         .attr('y', bbox.y - 5)
-  //         .attr('width', bbox.width + 20)
-  //         .attr('height', bbox.height + 10)
-  //         .attr('rx', 5)
-  //         .attr('ry', 5)
-  //         .style('fill', 'grey')
-  //         .style('stroke', 'black')
-  //         .style('stroke-width', '1px');
-  //     })
-  //     .on('mouseout', () => {
-  //       d3.selectAll('.tooltip-group').remove();
-  //     });
-  // };
-
   const renderChart = (
     selector: string,
     data: { timestamp: number; value: number }[],
@@ -622,18 +519,6 @@ const Dashboard = () => {
       .style('shape-rendering', 'crispEdges')
       .attr('d', line);
 
-    // Add data points as small rectangles (1x1 pixels) 
-    // formattedData.forEach((d: any) => {
-    //   chartPlane
-    //     .append('rect')
-    //     .attr('class', 'point') // Center the rectangle on the x coordinate
-    //     .attr('x', Math.floor(x(d[0]))) // Center the rectangle on the x coordinate
-    //     .attr('y', Math.floor(y(d[1]))) // Center the rectangle on the y coordinate
-    //     .attr('width', 1 / window.devicePixelRatio)
-    //     .attr('height', 1 / window.devicePixelRatio)
-    //     .style('shape-rendering', 'crispEdges')
-    //     .attr('fill', 'purple');
-    // });
 
     const zoom = d3
       .zoom()
@@ -667,50 +552,65 @@ const Dashboard = () => {
     return renderTime;
   };
 
-  // const renderErrorPixels = (selector: string, error: ErrorDto, height: number) => {
-  //   const svg = d3.select(selector);
+  const fetchReferenceData = async () => {
+    if (!metadata || !from || !to || !measures.length) return null;
+    
+    if (referenceAbortController.current) {
+      referenceAbortController.current.abort();
+    }
+    const controller = new AbortController();
+    referenceAbortController.current = controller;
+    
+    setIsReferenceFetching(true);
+    try {
+      const chartWidth = width - margin.left - margin.right;
+      const chartHeight = Math.floor(height / measures.length - margin.bottom - margin.top);
 
-  //   if (isFalsePixelsVisible) {
-  //     pixelArrayToCoordinates(error.falsePixels).map(
-  //       ({x, y}: { x: number; y: number }, index: number) => {
-  //         addRect({x, y: y}, 'red', height, svg);
-  //       }
-  //     );
-  //   }
+      // Use the M4 instance ID for reference data
+      const m4InstanceId = `${REFERENCE_METHOD}-reference`;
 
-  //   if (isMissingPixelsVisible) {
-  //     pixelArrayToCoordinates(error.missingPixels).map(
-  //       ({x, y}: { x: number; y: number }, index: number) => {
-  //         addRect({x, y: y}, 'orange', height, svg);
-  //       }
-  //     );
-  //   }
+      const request: Query = {
+        query: {
+          methodConfig: {
+            key: m4InstanceId,
+            params: {},
+          },
+          from: from,
+          to: to,
+          measures: measures.map(m => m.id),
+          width: chartWidth,
+          height: chartHeight,
+          schema: schema,
+          table: table,
+          params: {},
+        },
+      };
 
-  //   const tooltipGroup = svg.append('g').attr('class', 'info-group');
-  //   const text = tooltipGroup
-  //     .append('text')
-  //     .attr('class', 'info')
-  //     .style('text-anchor', 'middle')
-  //     .style('stroke-width', '1px')
-  //     .attr('font-size', 'smaller')
-  //     .text(`Error: ${round(error.error * 100)}%`)
-  //     .attr('x', width - margin.left - margin.right - 10)
-  //     .attr('y', margin.top + margin.bottom);
+      const response = await apiService.getData(
+        datasource,
+        queryToQueryDto(request),
+        controller.signal
+      );
 
-  //   const bbox = text.node()?.getBBox();
+      if (response) {
+        const newReferenceResults = measures.reduce((acc, measure) => {
+          acc[measure.id] = response;
+          return acc;
+        }, {} as Record<number, QueryResultsDto>);
+        
+        setReferenceResults(newReferenceResults);
+      }
 
-  //   if (!bbox) return;
-
-  //   tooltipGroup
-  //     .insert('rect', 'text')
-  //     .attr('x', bbox.x - 10)
-  //     .attr('y', bbox.y - 5)
-  //     .attr('width', bbox.width + 20)
-  //     .attr('height', bbox.height + 10)
-  //     .style('fill', 'lightgrey')
-  //     .style('stroke', 'black')
-  //     .style('stroke-width', '1px');
-  // };
+    } catch (error) {
+      if (axios.isCancel(error)) {
+        console.log('Reference data fetch cancelled');
+      } else {
+        console.error('Error fetching reference data:', error);
+      }
+    } finally {
+      setIsReferenceFetching(false);
+    }
+  };
 
   const [selectedMethodInstances, setSelectedMethodInstances] = useState<string[]>([]);
   const [loadingCharts, setLoadingCharts] = useState<Record<string, boolean>>({});
@@ -821,8 +721,6 @@ const Dashboard = () => {
     selectedMethodInstances,
     metadata,
     height,
-    // isFalsePixelsVisible,
-    // isMissingPixelsVisible,
   ]);
 
   // render chart in modal
@@ -863,8 +761,6 @@ const Dashboard = () => {
     metadata,
     modalHeight,
     selectedChart,
-    // isFalsePixelsVisible,
-    // isMissingPixelsVisible
  ]);
 
   // add resize handler for charts
@@ -884,46 +780,6 @@ const Dashboard = () => {
       }
     });
   }, []);
-
-  // render error pixels
-  // useEffect(() => {
-  //   if (!queryResults || !measures || selectedChart !== null) return;
-    
-  //   for (const algo of methods) {
-  //     const res = queryResults[algo];
-  //     if (!res) continue;
-
-  //     const errors = Object.values(res.error);
-  //     const chartHeight = Math.floor(height / measures.length);
-  //     const containerHeight = chartHeight - margin.bottom - 1;
-
-  //     errors.forEach((err, index) => {
-  //       renderErrorPixels(`#svg_${algo}_${index} > g`, err, containerHeight);
-  //     });
-  //   }
-  // }, [queryResults, metadata, height,
-  //    isFalsePixelsVisible, isMissingPixelsVisible
-  //   ]);
-
-  // render error pixels in modal
-  // useEffect(() => {
-  //   if (!queryResults || !measures || selectedChart === null) return;
-
-  //   for (const algo of methods) {
-  //     const res = queryResults[algo];
-  //     if (!res) continue;
-  //     const err = res.error[selectedChart];
-  //     const chartHeight = Math.floor(modalHeight / methods.length);
-  //     const containerHeight = chartHeight - margin.top;
-  //     renderErrorPixels(
-  //       `#svg_${algo}_${selectedChart}-modal > g`,
-  //       err,
-  //       containerHeight
-  //     );
-  //   }
-  // }, [queryResults, metadata, height, 
-  //   isFalsePixelsVisible, isMissingPixelsVisible
-  // ]);
 
   // fetch metadata
   useEffect(() => {
@@ -958,19 +814,33 @@ const Dashboard = () => {
 
   const handleCalculateErrorMetrics = async () => {
     setIsErrorMetricsLoading(true);
+    setIsErrorCalculationInProgress(true);
+    
     try {
-      if (errorMetrics.length === 0) {
-        setSelectedErrorMetric({label: 'SSIM', id: "ssim"});
-      }
+      // First ensure we have reference data
+      await fetchReferenceData();
       
-      // Generate unique metrics for each method instance
+      // Wait a brief moment to ensure reference data is properly set
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Generate metrics by comparing each method's visualization with reference
       const metricsData = measures.map((m) => {
         const measureData: any = { measure: m.name };
+        
         selectedMethodInstances.forEach((instanceId) => {
-          // Generate different random values for each method instance
-          measureData[`${instanceId}_ssim`] = 0.95 + (Math.random() * 0.01);
-          measureData[`${instanceId}_pixelError`] = Math.random();
+          const methodResult = queryResults[instanceId];
+          const referenceResult = referenceResults[m.id];
+          
+          if (methodResult && referenceResult) {
+            measureData[`${instanceId}_ssim`] = calculateSSIM(
+              methodResult.data[m.id],
+              referenceResult.data[m.id],
+              width,
+              height / measures.length
+            );
+          }
         });
+        
         return measureData;
       });
       
@@ -978,11 +848,58 @@ const Dashboard = () => {
       setIsErrorMetricsOutdated(false);
     } finally {
       setIsErrorMetricsLoading(false);
+      setIsErrorCalculationInProgress(false);
     }
   };
 
+  const calculateSSIM = (methodData: any[], referenceData: any[], width: number, height: number) => {
+    // This is where you would implement the SSIM calculation
+    // You'll need to:
+    // 1. Convert the time series data to images
+    // 2. Calculate SSIM between the images
+    // For now, return a placeholder value
+    return 0.95 + (Math.random() * 0.01);
+  };
+
+  // Reset reference results when measures change
+  useEffect(() => {
+    setReferenceResults({});
+  }, [measures]);
+
+  // Add cleanup for reference abort controller
+  useEffect(() => {
+    return () => {
+      if (referenceAbortController.current) {
+        referenceAbortController.current.abort();
+      }
+    };
+  }, []);
+
+  // Initialize M4 method instance on component mount
+  useEffect(() => {
+    const m4Instance = {
+      id: `${REFERENCE_METHOD}-reference`,
+      method: REFERENCE_METHOD,
+      initParams: {}
+    };
+
+    setMethodInstances(prev => ({
+      ...prev,
+      [REFERENCE_METHOD]: [m4Instance]
+    }));
+
+    // Add M4 to selected instances by default
+    setSelectedMethodInstances([m4Instance.id]);
+  }, []);
+
   const [controlPanelExpanded, setControlPanelExpanded] = useState(true);
   const [metricsPanelExpanded, setMetricsPanelExpanded] = useState(true);
+
+  useEffect(() => {
+    if (isErrorCalculationInProgress && !isReferenceFetching && Object.keys(referenceResults).length > 0) {
+      handleCalculateErrorMetrics();
+    }
+  }, [isReferenceFetching, referenceResults, isErrorCalculationInProgress]);
 
   return (
     <Box sx={{ flexGrow: 1 }}>
@@ -1088,7 +1005,6 @@ const Dashboard = () => {
                               renderValue={(selected) => (
                                 <Box display="flex" flexWrap="wrap" gap={1}>
                                   {(selected as string[]).map((value) => {
-                                    const instance = methodInstances[selectedMethod]?.find(inst => inst.id === value);
                                     return (
                                       <Chip
                                         key={value}

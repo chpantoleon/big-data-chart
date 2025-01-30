@@ -3,8 +3,13 @@ export interface ResponseDto {
   queryResults: QueryResultsDto;
 }
 
+export interface TimeSeriesPoint {
+  timestamp: number;
+  value: number;
+}
+
 export interface QueryResultsDto {
-  data: Record<string, { timestamp: number, value: number; }[]>;
+  data: Record<string, TimeSeriesPoint[]>;
   timeRange: {
     from: number;
     to: number;
