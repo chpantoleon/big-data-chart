@@ -35,31 +35,9 @@ import { ErrorDto, QueryResultsDto } from '../interfaces/data';
 import { Query, queryToQueryDto } from '../interfaces/query';
 import ResponseTimes from 'components/ProgressBar';
 import { Point } from 'interfaces/point';
-import { calculateJaccardSimilarity } from 'utils/jaccard';
-import { calculateSSIM } from 'utils/ssim';
+import { compare } from '../utils/ssim';
 
 const round = (num: number): number => Math.round((num + Number.EPSILON) * 100) / 100;
-
-const generateLine = (start: { x: number; y: number }, length: number, angle: number) =>
-  Array.from({ length }, (_, i) => ({
-    x: Math.round(start.x + i * Math.cos((angle * Math.PI) / 180)),
-    y: Math.round(start.y + i * Math.sin((angle * Math.PI) / 180)),
-  }));
-
-const generateSineWave = (
-  start: { x: number; y: number },
-  length: number,
-  amplitude: number,
-  frequency: number,
-  phaseShift: number = 0,
-  verticalShift: number = 0
-): Point[] =>
-  Array.from({ length }, (_, i) => ({
-    x: start.x + i,
-    y: Math.round(
-      start.y + amplitude * Math.sin(frequency * (start.x + i) + phaseShift) + verticalShift
-    ),
-  }));
 
 const Dashboard = () => {
   const [loading, setLoading] = useState<boolean>(false);
@@ -117,27 +95,6 @@ const Dashboard = () => {
       seen.add(key); // Mark as seen
       return true;
     });
-  };
-
-  const calculateTrueError = (pixelArray1: Point[], pixelArray2: Point[]): number => {
-    let differences = 0;
-
-    for (let column = 1 + margin.left; column < width; column++) {
-      let item1 = pixelArray1.filter((i) => i.x === column);
-      let item2 = pixelArray2.filter((i) => i.x === column);
-
-      item1.forEach((i1) =>
-        item2.forEach((i2) => {
-          if (i2.y && i1.y !== i2.y) {
-            console.log(i1.x, i1.y, i2.x, i2.y);
-            differences++;
-            return;
-          }
-        })
-      );
-    }
-
-    return (differences / width) * 100;
   };
 
   const getResponseTimeSeries = (): any[] => {
@@ -612,7 +569,7 @@ const Dashboard = () => {
 
     const path = chartPlane
       .append('path')
-      .attr('class', 'path')
+      .attr('class', 'chart-line')
       .datum(formattedData)
       .attr('fill', 'none')
       .attr('stroke', 'blue')
@@ -621,66 +578,61 @@ const Dashboard = () => {
       .attr('d', line);
 
     // Add data points as small rectangles (1x1 pixels)
-    const datapoints = formattedData.map((d: any) => ({
-      x: Math.floor(x(d[0])),
-      y: Math.floor(y(d[1])),
+    // const datapoints = formattedData.map((d: any) => ({
+    //   x: Math.floor(x(d[0])),
+    //   y: Math.floor(y(d[1])),
+    // }));
+
+    // deduplicatePixels(datapoints).forEach((datapoint: any) => {
+    //   chartPlane
+    //     .append('rect')
+    //     .attr('class', 'point') // Center the rectangle on the x coordinate
+    //     .attr('x', datapoint.x) // Center the rectangle on the x coordinate
+    //     .attr('y', datapoint.y) // Center the rectangle on the y coordinate
+    //     .attr('width', 1 / window.devicePixelRatio)
+    //     .attr('height', 1 / window.devicePixelRatio)
+    //     .style('shape-rendering', 'crispEdges')
+    //     .attr('fill', 'purple');
+    // });
+
+    // Define the sine wave parameters
+    const frequency = 15; // Wave frequency
+    const numPoints = 100; // Number of points
+
+    // Create the x and y scales
+    const xScale = d3
+      .scaleLinear()
+      .domain([0, numPoints])
+      .range([margin.left, width - margin.left]);
+
+    const yScale = d3
+      .scaleLinear()
+      .domain([-1, 1])
+      .range([height - margin.top, margin.top]);
+
+    // Generate sine wave points
+    const sineData = d3.range(numPoints).map((d: any) => ({
+      x: d,
+      y: Math.sin(d * frequency), // Sine function
     }));
 
-    deduplicatePixels(datapoints).forEach((datapoint: any) => {
-      chartPlane
-        .append('rect')
-        .attr('class', 'point') // Center the rectangle on the x coordinate
-        .attr('x', datapoint.x) // Center the rectangle on the x coordinate
-        .attr('y', datapoint.y) // Center the rectangle on the y coordinate
-        .attr('width', 1 / window.devicePixelRatio)
-        .attr('height', 1 / window.devicePixelRatio)
-        .style('shape-rendering', 'crispEdges')
-        .attr('fill', 'purple');
-    });
+    // Create a D3 line generator
+    const linesin = d3
+      .line()
+      .x((d:any) => xScale(d.x))
+      .y((d:any) => yScale(d.y))
+      .curve(d3.curveNatural); // Smooth curve
 
-    if (measure) {
-      const pixels = pixelArrayToCoordinates(queryResults!.litPixels[measure]);
-      const str8Line45 = generateLine({ x: 0, y: 150 }, pixels.length, 0);
-      const str8LineM45 = generateLine({ x: 0, y: 100 }, pixels.length, 0);
-      const sineWave1 = generateSineWave({ x: 0, y: 150 }, pixels.length, 10, 0.1, 0, 0);
-      const sineWave2 = generateSineWave({ x: 0, y: 150 }, pixels.length, 10, 0.1, Math.PI, 0);
+    // Append the sine wave path to the SVG
+    svg
+      .append('path')
+      .datum(sineData)
+      .attr('class', 'sine-wave')
+      .attr('fill', 'none')
+      .attr('stroke', 'blue')
+      .attr('stroke-width', 2)
+      .attr('d', linesin);
 
-      const ssim = calculateSSIM(str8Line45, str8LineM45);
-
-      str8Line45.forEach((datapoint: any) => {
-        chartPlane
-          .append('rect')
-          .attr('class', 'point') // Center the rectangle on the x coordinate
-          .attr('x', datapoint.x + margin.left + 1) // Center the rectangle on the x coordinate
-          .attr('y', height - (datapoint.y + margin.bottom) - 2) // Center the rectangle on the y coordinate
-          .attr('width', 5 / window.devicePixelRatio)
-          .attr('height', 5 / window.devicePixelRatio)
-          .style('shape-rendering', 'crispEdges')
-          .attr('fill', 'blue');
-      });
-
-      str8LineM45.forEach((datapoint: any) => {
-        chartPlane
-          .append('rect')
-          .attr('class', 'point') // Center the rectangle on the x coordinate
-          .attr('x', datapoint.x + margin.left + 1) // Center the rectangle on the x coordinate
-          .attr('y', height - (datapoint.y + margin.bottom) - 2) // Center the rectangle on the y coordinate
-          .attr('width', 5 / window.devicePixelRatio)
-          .attr('height', 5 / window.devicePixelRatio)
-          .style('shape-rendering', 'crispEdges')
-          .attr('fill', 'red');
-      });
-
-      const text = svg
-        .append('text')
-        .attr('class', 'info')
-        .style('text-anchor', 'left')
-        .style('stroke-width', '1px')
-        .attr('font-size', 'smaller')
-        .text(`SSIM: ${ssim}`)
-        .attr('x', 0 + margin.left + 5)
-        .attr('y', margin.top + margin.bottom);
-    }
     const zoom = d3
       .zoom()
       .on('zoom', (event: any) => {
@@ -832,7 +784,7 @@ const Dashboard = () => {
       if (d3.select('#chart-content').node()) {
         setWidth(Math.floor(d3.select('#chart-content').node().getBoundingClientRect().width));
       }
-    
+
       if (d3.select('#chart-content-modal').node()) {
         setModalWidth(
           Math.floor(d3.select('#chart-content-modal').node().getBoundingClientRect().width)
@@ -873,6 +825,18 @@ const Dashboard = () => {
   useEffect(() => {
     fetchMetadata();
   }, [table, datasource, schema]);
+
+  // SSIM calculation
+  useEffect(() => {
+    if (!d3.select('#svg0 .chart-line').size()) return;
+    const res = compare(
+      d3.select('#svg0 .chart-line').attr('d'),
+      d3.select('#svg0 .sine-wave').attr('d'),
+      width,
+      height / measures.length
+    );
+    console.log(res);
+  }, [queryResults]);
 
   // fetch data
   useEffect(() => {
